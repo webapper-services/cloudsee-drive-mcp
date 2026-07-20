@@ -1,0 +1,83 @@
+{
+  "name": "@webapper/cloudsee-drive-mcp",
+  "version": "0.1.5",
+  "mcpName": "io.github.webapper-services/cloudsee-drive",
+  "description": "Open-source MCP server for CloudSee Drive — connect your CloudSee account (Amazon S3) to Claude Desktop and any MCP client with an API key.",
+  "type": "module",
+  "license": "MIT",
+  "author": "Webapper",
+  "homepage": "https://github.com/webapper-services/cloudsee-drive-mcp#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/webapper-services/cloudsee-drive-mcp.git"
+  },
+  "bugs": {
+    "url": "https://github.com/webapper-services/cloudsee-drive-mcp/issues"
+  },
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "cloudsee",
+    "cloudsee-drive",
+    "s3",
+    "claude",
+    "ai",
+    "file-management"
+  ],
+  "bin": {
+    "cloudsee-drive-mcp": "dist/index.js",
+    "cloudsee-drive-mcp-http": "dist/http.js"
+  },
+  "main": "dist/index.js",
+  "module": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "contract/registry.snapshot.json",
+    "README.md",
+    "PRIVACY.md",
+    "LICENSE",
+    "CHANGELOG.md"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "start": "node dist/index.js",
+    "start:http": "node dist/http.js",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "sync:contract": "node scripts/sync-contract.mjs",
+    "prepublishOnly": "npm run build"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.9.0",
+    "@semantic-release/changelog": "^6.0.3",
+    "@semantic-release/git": "^10.0.1",
+    "@types/node": "^20.14.0",
+    "eslint": "^9.9.0",
+    "semantic-release": "^24.0.0",
+    "tsup": "^8.2.0",
+    "typescript": "^5.5.0",
+    "typescript-eslint": "^8.0.0",
+    "vitest": "^2.0.0"
+  }
+}

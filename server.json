@@ -1,0 +1,48 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.webapper-services/cloudsee-drive",
+  "description": "Open-source MCP server for CloudSee Drive — connect your CloudSee account (Amazon S3) to Claude and any MCP client.",
+  "repository": {
+    "url": "https://github.com/webapper-services/cloudsee-drive-mcp",
+    "source": "github"
+  },
+  "version": "0.1.5",
+  "packages": [
+    {
+      "registryType": "npm",
+      "identifier": "@webapper/cloudsee-drive-mcp",
+      "version": "0.1.5",
+      "transport": { "type": "stdio" },
+      "environmentVariables": [
+        {
+          "name": "CLOUDSEE_API_KEY_ID",
+          "description": "Your CloudSee Drive API key id.",
+          "isRequired": true,
+          "isSecret": false,
+          "format": "string"
+        },
+        {
+          "name": "CLOUDSEE_API_KEY_SECRET",
+          "description": "The matching CloudSee Drive API key secret.",
+          "isRequired": true,
+          "isSecret": true,
+          "format": "string"
+        },
+        {
+          "name": "CLOUDSEE_API_BASE_URL",
+          "description": "API base URL. Optional — defaults to https://drive-api.cloudsee.cloud (UAT: https://drive-api-uat.cloudsee.cloud).",
+          "isRequired": false,
+          "isSecret": false,
+          "format": "string"
+        },
+        {
+          "name": "CLOUDSEE_DEFAULT_BUCKET",
+          "description": "Optional default drive (S3 bucket) used when a tool call omits bucketName.",
+          "isRequired": false,
+          "isSecret": false,
+          "format": "string"
+        }
+      ]
+    }
+  ]
+}
