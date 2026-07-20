@@ -19,7 +19,7 @@ verified against UAT (`https://drive-api-uat.cloudsee.cloud`) on **2026-07-10**.
 
 ## 1. Prerequisites
 
-- **Node.js ≥ 18** (`node -v`). No native dependencies — macOS, Linux, Windows all work.
+- **Node.js ≥ 20** (`node -v`). No native dependencies — macOS, Linux, Windows all work.
 - A **CloudSee Drive API key** — a **key id** (`AKIA…`) and a **secret** (shown once).
   Create one in the CloudSee Drive dashboard. Keep the secret out of source control.
 - An MCP client (e.g. **Claude Desktop**) for normal use, or just Node for testing.

@@ -62,7 +62,7 @@ globally instead:
 npm install -g @webapper/cloudsee-drive-mcp
 ```
 
-Requires **Node.js ≥ 18**. No native dependencies — works on macOS, Linux, and Windows.
+Requires **Node.js ≥ 20**. No native dependencies — works on macOS, Linux, and Windows.
 
 ## Configuration
 
