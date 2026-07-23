@@ -1,13 +1,12 @@
 name: Release
 
-# Publishes the scoped package to NPM via semantic-release on each push to main.
-# Publishing is gated on the NPM_TOKEN secret being present — without it, no
-# release occurs. Making the repo public and the first publish are
-# approval-gated human actions.
+# Publishes the scoped package to NPM via semantic-release. The release runs
+# manually (workflow_dispatch) when a maintainer chooses to publish; it does not
+# run automatically on push. A valid NPM_TOKEN secret must be present when the
+# workflow is run — without it, no release occurs.
 
 on:
-  push:
-    branches: [main]
+  workflow_dispatch:
 
 permissions:
   contents: write
