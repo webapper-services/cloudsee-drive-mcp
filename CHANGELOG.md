@@ -1,3 +1,15 @@
+# 1.0.0 (2026-08-05)
+
+
+* feat!: report the real package version, and document key rotation and unstable list_files ids ([b7e8de8](https://github.com/webapper-services/cloudsee-drive-mcp/commit/b7e8de875ebc2ba89d5cf896e2e17c46ed9d3871))
+
+
+### BREAKING CHANGES
+
+* list_buckets calls POST /storage/drives and returns the account's
+registered drives, permission-filtered, instead of the bucket inventory that the withdrawn
+POST /storage/buckets endpoint returned.
+
 # Changelog
 
 All notable changes to this project are documented here. Going forward this file is managed by
