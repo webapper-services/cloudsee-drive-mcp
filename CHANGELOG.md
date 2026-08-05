@@ -38,6 +38,17 @@ predate automated releasing and are consolidated by hand.
   means the API key lacks the tool's scope (`drive:write` / `drive:delete`). The `list_buckets`
   known-limitation note is corrected: it returns the drives the API key can access, no longer
   an empty list.
+- **`list_files`'s per-call id instability is now documented everywhere a user or the model
+  might look**: the README (previously silent), the Guide's queued-operations section
+  (previously undocumented *why*), and the tool's own description (what the model reads at
+  call time).
+- **API key rotation now has a documented Troubleshooting entry.** Rotating a key mints a new
+  id and secret together and revokes the old id immediately — both `CLOUDSEE_API_KEY_ID` and
+  `CLOUDSEE_API_KEY_SECRET` must be updated together after rotating.
+- **The destructive-confirmation wording (README + Guide) now describes the actual safety
+  mechanism.** It previously implied the server's two-step confirm was the safety boundary; it
+  now names Claude Desktop's own tool-permission prompt as the real gate and explains Deny,
+  per-call independence, and the "Allow for this task" default.
 
 ### Added
 
@@ -68,6 +79,10 @@ predate automated releasing and are consolidated by hand.
   a full-state SET: metadata is now the structured `{category, description, project}` object and
   `tags` the complete replacement tag set, with the overwrite semantics called out in the tool
   description and confirmation preview. Verified end-to-end against UAT.
+- **The advertised server version no longer drifts from `package.json`.** `VERSION` was
+  hardcoded to `0.1.0` in `src/version.ts` and never updated by anything; it is now read from
+  `package.json` at process start, so the MCP handshake, the health check, and the
+  `User-Agent` string always report the version that was actually published.
 
 ## [0.1.5] - 2026-06-23
 

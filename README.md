@@ -10,7 +10,8 @@ interface for Amazon S3) to Claude Desktop and any MCP-compatible client, and ma
 files in natural language.
 
 > Browse, search, download, share, upload, organize, and tag your CloudSee Drive files from
-> your AI assistant — with explicit confirmation before anything destructive happens.
+> your AI assistant — every destructive action must be approved through Claude Desktop's own
+> tool-permission prompt before it runs.
 
 📘 **New here?** The [Installation, Commands & Testing Guide](docs/GUIDE.md) walks through
 install, configuration, every tool with examples, and how to test against a live API.
@@ -85,7 +86,7 @@ Most tools operate on one **drive** (an S3 bucket): pass `bucketName`, or set
 
 | Tool | Description | Access |
 | --- | --- | --- |
-| `list_buckets` | List accessible buckets | read |
+| `list_buckets` | List the account's registered drives | read |
 | `list_files` | List all files in a drive (recursive) | read |
 | `browse_folder` | List a folder's contents (indexed view) | read |
 | `search_files` | Find files/folders by name keyword | read |
@@ -103,12 +104,32 @@ Most tools operate on one **drive** (an S3 bucket): pass `bucketName`, or set
 | `update_metadata` | Update a file's metadata | write · **confirm** |
 | `restore_archived_file` | Un-archive a Glacier object | write · **confirm** |
 
+### `list_files` ids are not stable — don't use them for mutation
+
+`list_files` lists straight from storage and mints a new object id on every call. Never pass
+that id to `rename_file`, `move_file`, `update_metadata`, or `delete_files`. Use `search_files`,
+`browse_folder`, or `recent_files` instead — their `StorageId` is a persisted id from the search
+index and stays stable across calls.
+
 ### Destructive operations require confirmation
 
 Tools marked **confirm** (delete, rename, move, update-metadata, restore) use **two-step
-confirmation**: the first call returns a preview and makes **no changes**; you must call again
-with `confirm: true` to proceed. This is a client-side safety prompt — the CloudSee API
-authorizes every operation server-side; confirmation is not the security boundary.
+confirmation**: the first call returns a preview and makes **no changes**; the model must call
+again with `confirm: true` to proceed. The two-step call itself is filled in by Claude, not by
+you — it is not the actual approval gate.
+
+**The real gate is Claude Desktop's own tool-permission prompt**, which appears before any
+tool call runs. Four things worth knowing about it:
+
+- **Denying it genuinely stops the operation** — the tool is never invoked with `confirm: true`.
+- **Approving one destructive call does not approve a different one.** Approving a
+  `rename_file` call does not pre-approve a later `delete_files` call — each call is gated
+  independently.
+- **"Allow for this task" is the prompt's default button**, and once clicked it covers that
+  tool for the rest of the current chat — later calls to the same tool in the same
+  conversation won't prompt again. Choose "Allow once" to review every call individually.
+- This is still a client-side safety prompt — the CloudSee API authorizes every operation
+  server-side; confirmation is not the security boundary.
 
 ## Security
 
@@ -116,6 +137,9 @@ authorizes every operation server-side; confirmation is not the security boundar
   process**. The server **never logs the secret**, never returns it in tool output, and
   never writes it to a file. All diagnostics go to **stderr** (stdout is the MCP transport).
 - File downloads/shares return **short-lived pre-signed URLs**, never AWS credentials.
+- **Rotating an API key issues a new key id and secret together and revokes the old id
+  immediately** — update both `CLOUDSEE_API_KEY_ID` and `CLOUDSEE_API_KEY_SECRET` after
+  rotating; see [GUIDE.md §8 Troubleshooting](docs/GUIDE.md#8-troubleshooting).
 - Report vulnerabilities per [`SECURITY.md`](SECURITY.md). Never paste a real key/secret into
   an issue.
 

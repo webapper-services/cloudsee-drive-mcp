@@ -3,6 +3,7 @@ import type { AddressInfo } from "node:net";
 import type { Server } from "node:http";
 import { createHttpServer } from "../src/httpServer";
 import type { HttpConfig } from "../src/config";
+import { VERSION } from "../src/version";
 
 const cfg: HttpConfig = {
   port: 0,
@@ -38,9 +39,10 @@ describe("hosted HTTP server", () => {
   it("serves an unauthenticated health check", async () => {
     const res = await fetch(`${base}/healthz`);
     expect(res.status).toBe(200);
-    const body = (await res.json()) as { status: string; service: string };
+    const body = (await res.json()) as { status: string; service: string; version: string };
     expect(body.status).toBe("ok");
     expect(body.service).toBe("cloudsee-drive-mcp");
+    expect(body.version).toBe(VERSION);
   });
 
   it("publishes protected-resource metadata pointing at the CloudSee Drive AS", async () => {

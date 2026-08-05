@@ -147,7 +147,7 @@ confirmation (see below). Most tools need a **drive** — pass `bucketName` (or 
 
 | Tool | What it does | Access | Example prompt |
 | --- | --- | --- | --- |
-| `list_buckets` | List accessible buckets | read | "What CloudSee buckets can I access?" |
+| `list_buckets` | List the account's registered drives | read | "What CloudSee drives can I access?" |
 | `list_files` | List all files in a drive (recursive) | read | "List the files in the `max-2778abc0` drive." |
 | `browse_folder` | List a folder (indexed view) | read | "Show what's in `reports/` on drive `acme-docs`." |
 | `search_files` | Find by name keyword | read | "Find files named *invoice* in drive `acme-docs`." |
@@ -177,8 +177,15 @@ again with `confirm: true` to execute:
 { "name": "delete_files", "arguments": { "objects": [{ "key": "tmp/scratch.txt", "storageId": "<StorageId>" }], "confirm": true } }
 ```
 
-This is a **client-side safety prompt, not the security boundary** — the CloudSee API
-authorizes every operation server-side.
+**The safety boundary is not this two-step call — it's Claude Desktop's own tool-permission
+prompt.** Claude fills in `confirm: true` itself once you approve the call in that prompt.
+Denying the prompt genuinely stops the operation; approving one destructive call (e.g. a
+rename) does not approve a different one (e.g. a delete) — each call is gated independently.
+**"Allow for this task" is the prompt's default button** and, once clicked, covers that tool
+for the rest of the current chat, not just the call in front of you — choose "Allow once" to
+review every call. Even so, this is a **client-side safety prompt, not the security
+boundary** — the CloudSee API authorizes every operation server-side regardless of what the
+prompt shows.
 
 ### Queued write operations (rename / move / copy / delete)
 
@@ -187,7 +194,9 @@ enqueues the operation and returns a queue `RequestId`; the operation completes 
 background, typically within 1–2 minutes — verify by listing. They address the object by its
 exact `objectKey` (from any listing tool; folders keep their trailing slash) **plus** its
 `storageId` — the `StorageId` field returned by the indexed listing tools (`search_files`,
-`browse_folder`, `recent_files`; the id from `list_files` will **not** work):
+`browse_folder`, `recent_files`; the id from `list_files` will **not** work, because
+`list_files` lists straight from storage and mints a brand-new id for every object on every
+call — it is never the same id twice):
 
 - `rename_file`: `objectKey` + `newName` + `storageId` + `confirm`
 - `move_file`: `objectKey` + `destinationPath` + `storageId` (+ `asCopy` to copy; a move needs `confirm`)
@@ -218,10 +227,14 @@ The data plane is RPC: `POST {baseUrl}/v1/{noun}/{verb}` with `X-Api-Key-Id` /
 `X-Api-Key-Secret` headers and a JSON body. A `200` with `{"success":true,…}` means the key
 authenticates.
 
+Every `/v1/*` call also needs an `X-Api-Key` header carrying the **same value as the key id** —
+the gateway meters the usage plan on it and rejects the request before the API sees it when it
+is missing. `/v1/auth/verify` is the one exempt route, so a credential can be checked first.
+
 **PowerShell (Windows):**
 
 ```powershell
-$h = @{ 'X-Api-Key-Id'=$env:CLOUDSEE_API_KEY_ID; 'X-Api-Key-Secret'=$env:CLOUDSEE_API_KEY_SECRET; 'Content-Type'='application/json' }
+$h = @{ 'X-Api-Key'=$env:CLOUDSEE_API_KEY_ID; 'X-Api-Key-Id'=$env:CLOUDSEE_API_KEY_ID; 'X-Api-Key-Secret'=$env:CLOUDSEE_API_KEY_SECRET; 'Content-Type'='application/json' }
 Invoke-WebRequest -Uri 'https://drive-api-uat.cloudsee.cloud/v1/storage/recent' -Method Post -Headers $h -Body '{"limit":5}' -SkipHttpErrorCheck |
   Select-Object -ExpandProperty Content
 ```
@@ -230,6 +243,7 @@ Invoke-WebRequest -Uri 'https://drive-api-uat.cloudsee.cloud/v1/storage/recent' 
 
 ```bash
 curl -s https://drive-api-uat.cloudsee.cloud/v1/storage/recent \
+  -H "X-Api-Key: $CLOUDSEE_API_KEY_ID" \
   -H "X-Api-Key-Id: $CLOUDSEE_API_KEY_ID" \
   -H "X-Api-Key-Secret: $CLOUDSEE_API_KEY_SECRET" \
   -H 'Content-Type: application/json' -d '{"limit":5}'
@@ -345,6 +359,16 @@ Other notes:
 | Garbled MCP output | Something wrote to **stdout** (the transport). All app logs must go to stderr; set `CLOUDSEE_LOG_LEVEL=error` to quiet them. |
 | "Where did this result come from?" / want to audit calls | Set `CLOUDSEE_LOG_LEVEL=debug` — every API request + response is logged to stderr (§6c). |
 | A result looks wrong vs. the web app | `list_files` lists the **whole drive recursively** (root + all folders); the web app shows one folder. Compare the debug log (§6c) against the dashboard. |
+
+### Rotating an API key invalidates the old key id, not just the secret
+
+Rotating a key in the CloudSee dashboard mints a **new key id and a new secret together**; the
+old key id is revoked in the same operation, immediately — there is no grace period. If you
+update only `CLOUDSEE_API_KEY_SECRET` in `claude_desktop_config.json` after rotating and leave
+the old `CLOUDSEE_API_KEY_ID` in place, the server authenticates with a dead key id and you get
+a clean `Authentication failed (HTTP 401)` (the row above) with no indication rotation was the
+cause. **Update both `CLOUDSEE_API_KEY_ID` and `CLOUDSEE_API_KEY_SECRET` together whenever you
+rotate.**
 
 ---
 

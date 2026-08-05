@@ -2,17 +2,17 @@ import { z } from "zod";
 import { summarize, withCursor } from "./format";
 import { bucketField, resolveBucket, textResult, type ToolDef } from "./types";
 
-// ---- list_buckets → POST /storage/buckets (storageBucketList, drive:read) ----
+// ---- list_buckets → POST /storage/drives (storageDriveList, drive:read) ----
 const listBuckets: ToolDef = {
   name: "list_buckets",
-  title: "List buckets",
+  title: "List drives",
   description:
-    "List the storage buckets (Amazon S3 buckets) the authenticated CloudSee Drive account can access. Use this first to discover available buckets before browsing or searching.",
-  endpoint: { method: "POST", path: "/storage/buckets", scopes: ["drive:read"] },
+    "List the drives registered to the authenticated CloudSee Drive account that the caller is allowed to see. Use this first to discover available drives before browsing or searching; the `Name` of a drive is the `bucketName` the other tools expect.",
+  endpoint: { method: "POST", path: "/storage/drives", scopes: ["drive:read"] },
   inputSchema: {},
   annotations: { readOnlyHint: true, openWorldHint: true },
   handler: async (_args, { client }) => {
-    const data = await client.post("/storage/buckets", {});
+    const data = await client.post("/storage/drives", {});
     return textResult(summarize(data));
   },
 };
@@ -85,7 +85,7 @@ const listFiles: ToolDef = {
   name: "list_files",
   title: "List files in a drive",
   description:
-    "List the files in a drive straight from storage, recursively by default — the most reliable way to see what a drive actually contains. Requires the drive (bucketName). Returns names, sizes, storage classes and keys, with pagination.",
+    "List the files in a drive straight from storage, recursively by default — the most reliable way to see what a drive actually contains. Requires the drive (bucketName). Returns names, sizes, storage classes and keys, with pagination. The object id in each result is regenerated on every call and must never be used for rename_file, move_file, update_metadata, or delete_files — use search_files, browse_folder, or recent_files for a stable StorageId instead.",
   endpoint: { method: "POST", path: "/storage/bucket/files", scopes: ["drive:read"] },
   inputSchema: listFilesSchema.shape,
   annotations: { readOnlyHint: true, openWorldHint: true },

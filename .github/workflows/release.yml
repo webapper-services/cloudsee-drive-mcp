@@ -1,18 +1,31 @@
 name: Release
 
-# Publishes the scoped package to NPM via semantic-release. The release runs
-# manually (workflow_dispatch) when a maintainer chooses to publish; it does not
-# run automatically on push. A valid NPM_TOKEN secret must be present when the
-# workflow is run — without it, no release occurs.
+# Publishes the scoped package to NPM via semantic-release using npm trusted
+# publishing (OIDC). No NPM_TOKEN secret is involved: GitHub mints a short-lived
+# OIDC token for this job and npm exchanges it for publish rights. The release runs
+# manually (workflow_dispatch) when a maintainer chooses to publish; it does not run
+# automatically on push.
+#
+# Preconditions configured on npmjs.com for @webapper/cloudsee-drive-mcp
+# (Settings -> Trusted Publisher). Every field is case-sensitive and must match exactly:
+#   Publisher          GitHub Actions
+#   Organization       webapper-services
+#   Repository         cloudsee-drive-mcp
+#   Workflow filename  release.yml   <-- the name of THIS file, including the extension
+#   Allowed actions    Allow npm publish
+#
+# OIDC cannot publish a package's very first version, because npm requires the package
+# to exist before its trusted-publisher settings can be edited. 0.1.6 is already on the
+# registry, so that limitation does not apply here.
 
 on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: write # @semantic-release/git commits CHANGELOG/package.json back to main
   issues: write
   pull-requests: write
-  id-token: write
+  id-token: write # required — without it GitHub mints no OIDC token and npm falls back to asking for a token
 
 jobs:
   release:
@@ -25,13 +38,24 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          # semantic-release 25 requires node ^22.14.0 || >=24.10.0; both current LTS
+          # lines satisfy that. The published package's own floor stays node >=20
+          # (package.json engines) — this only governs the release job.
+          node-version: lts/*
           cache: npm
-          registry-url: https://registry.npmjs.org
+          # Deliberately NO registry-url. setup-node would write an .npmrc containing an
+          # _authToken placeholder, and semantic-release must own npm authentication for
+          # OIDC to be used at all. This is an explicit warning in semantic-release's
+          # GitHub Actions recipe, not a preference.
+      - name: Ensure the npm CLI supports trusted publishing
+        # Trusted publishing needs npm CLI >= 11.5.1. Pinned as a floor, not an exact
+        # version, so patch releases still land.
+        run: npm install -g "npm@^11.5.1"
       - run: npm ci
       - run: npm run build
       - name: Semantic Release
         env:
+          # GITHUB_TOKEN only — used for the release commit, the git tag and the GitHub
+          # release. npm auth comes from the OIDC token, so no NPM_TOKEN is set.
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: npx semantic-release

@@ -44,4 +44,9 @@ describe("tool definitions and input schemas", () => {
     expect(schema.safeParse({}).success).toBe(false);
     expect(schema.safeParse({ objectKey: "a/b.txt" }).success).toBe(true);
   });
+
+  it("list_files warns its id is unstable, in its own description", () => {
+    const tool = allTools.find((t) => t.name === "list_files");
+    expect(tool!.description).toMatch(/regenerated on every call/i);
+  });
 });

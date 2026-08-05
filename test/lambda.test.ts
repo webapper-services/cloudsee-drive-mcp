@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeAll } from "vitest";
+import { VERSION } from "../src/version";
 
 // The handler reads config from env at first call (cached); set it before importing.
 beforeAll(() => {
@@ -38,6 +39,7 @@ describe("lambda handler (stateless MCP over API Gateway)", () => {
     const res = await invoke(ev("GET", "/healthz"));
     expect(res.statusCode).toBe(200);
     expect(JSON.parse(res.body).status).toBe("ok");
+    expect(JSON.parse(res.body).version).toBe(VERSION);
   });
 
   it("publishes protected-resource metadata pointing at the CloudSee Drive AS", async () => {

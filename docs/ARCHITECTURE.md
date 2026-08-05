@@ -440,7 +440,7 @@ and returns a `RequestId`; it completes in the background, typically within 1–
 
 | Tool | `POST` endpoint (under `/v1`) | Scope | Status |
 | --- | --- | --- | --- |
-| `list_buckets` | `/storage/buckets` | `drive:read` | live — the key's accessible drives |
+| `list_buckets` | `/storage/drives` | `drive:read` | live — the account's registered drives, permission-filtered |
 | `browse_folder` | `/storage/list` | `drive:read` | live — indexed view |
 | `search_files` | `/storage/list` (+`searchingKeyword`) | `drive:read` | live — indexed view |
 | `list_files` | `/storage/bucket/files` (`deepQuery`) | `drive:read` | live — recursive, from storage |

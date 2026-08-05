@@ -3,6 +3,7 @@
 // handshake + tools/list. Uses placeholder creds — listing tools makes no API
 // call, so it runs fully offline and proves the bin starts and registers tools.
 //   npm run build && node scripts/smoke.mjs
+import { readFileSync } from "node:fs";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 
@@ -20,6 +21,15 @@ const transport = new StdioClientTransport({
 
 const client = new Client({ name: "smoke-test", version: "0.0.0" });
 await client.connect(transport);
+
+const pkgVersion = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")).version;
+const serverVersion = client.getServerVersion()?.version;
+console.log(`server version: ${serverVersion} (package.json: ${pkgVersion})`);
+if (serverVersion !== pkgVersion) {
+  console.error(`VERSION MISMATCH: server advertised ${serverVersion}, package.json says ${pkgVersion}`);
+  process.exit(1);
+}
+
 const { tools } = await client.listTools();
 await client.close();
 
