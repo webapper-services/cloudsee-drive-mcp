@@ -2,9 +2,19 @@ name: Release
 
 # Publishes the scoped package to NPM via semantic-release using npm trusted
 # publishing (OIDC). No NPM_TOKEN secret is involved: GitHub mints a short-lived
-# OIDC token for this job and npm exchanges it for publish rights. The release runs
-# manually (workflow_dispatch) when a maintainer chooses to publish; it does not run
-# automatically on push.
+# OIDC token for this job and npm exchanges it for publish rights.
+#
+# The release runs automatically once CI has passed on main, and can still be run by
+# hand from the Actions tab. It deliberately does NOT trigger on push: CI and this
+# workflow would then run concurrently, and this job would publish an immutable npm
+# version before CI could report a failure — this job only builds, it does not lint,
+# typecheck, test or audit. Gating on `workflow_run` means the full CI matrix
+# (3 OS x 2 node, plus the production-dependency audit) has already gone green on the
+# same commit.
+#
+# No release loop is possible: the release commit semantic-release pushes carries
+# [skip ci] (see .releaserc.json), so it starts no CI run and therefore no release run.
+# A push whose commits are all chore/docs/ci simply ends with "no release necessary".
 #
 # Preconditions configured on npmjs.com for @webapper/cloudsee-drive-mcp
 # (Settings -> Trusted Publisher). Every field is case-sensitive and must match exactly:
@@ -15,10 +25,14 @@ name: Release
 #   Allowed actions    Allow npm publish
 #
 # OIDC cannot publish a package's very first version, because npm requires the package
-# to exist before its trusted-publisher settings can be edited. 0.1.6 is already on the
-# registry, so that limitation does not apply here.
+# to exist before its trusted-publisher settings can be edited. The package is already on
+# the registry, so that limitation does not apply here.
 
 on:
+  workflow_run:
+    workflows: ["CI"] # must match `name:` in ci.yml exactly
+    types: [completed]
+    branches: [main]
   workflow_dispatch:
 
 permissions:
@@ -30,7 +44,11 @@ permissions:
 jobs:
   release:
     runs-on: ubuntu-latest
-    if: ${{ github.repository_owner != '' }}
+    # Manual runs always proceed. Automatic runs proceed only when the CI run that
+    # triggered them succeeded — `workflow_run` fires on completion, failure included.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      github.event.workflow_run.conclusion == 'success'
     steps:
       - uses: actions/checkout@v4
         with:
