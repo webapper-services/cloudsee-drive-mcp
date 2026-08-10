@@ -1,31 +1,19 @@
-// Single source of truth for the package version, surfaced to the MCP client
-// handshake, the health check, and the User-Agent. Read from package.json at
-// process start — not hardcoded, not a static import (tsconfig.json's
-// rootDir: "src" excludes ../package.json from the compiled program) — so it
-// can never drift from what was actually published again.
-import { readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+// The version is substituted by esbuild at build time, so nothing is read from
+// disk at runtime. The Lambda deploy package is a lone lambda.mjs with no
+// package.json beside it; doing this lookup at load time crashed init and made
+// every request return 502 on production (CSD-628).
+//
+// Every bundler entry point MUST declare the define. Three configs do:
+//   server/tsup.config.ts        -> npm package (dist/index.js, dist/http.js)
+//   infra/tsup.lambda.config.ts  -> Lambda bundle (infra/build/lambda/lambda.mjs)
+//   server/vitest.config.ts      -> unit tests, which run the TS sources directly
+// All three read the value from server/scripts/package-version.mjs.
+//
+// A new entry point that forgets the define throws ReferenceError at load. That
+// is deliberate: fail loudly at startup rather than advertise a wrong version,
+// which is what a `process.env` fallback would have done silently.
+declare const __MCP_SERVER_VERSION__: string;
 
-// package.json sits one directory above this file for every entry point
-// EXCEPT the Lambda deploy bundle (infra/build/lambda/lambda.mjs), which ships
-// as a single self-contained file with no npm package around it —
-// infra/deploy.ps1 copies package.json next to it, so it resolves
-// same-directory there. Tried in this order; extend the list rather than
-// touching the six call sites if a future entry point needs a third layout.
-const CANDIDATE_PATHS = ["../package.json", "./package.json"];
-
-function readPackageVersion(): string {
-  const here = dirname(fileURLToPath(import.meta.url));
-  for (const candidate of CANDIDATE_PATHS) {
-    try {
-      const pkg = JSON.parse(readFileSync(join(here, candidate), "utf8")) as { version?: string };
-      if (typeof pkg.version === "string" && pkg.version.length > 0) return pkg.version;
-    } catch {
-      // try the next candidate
-    }
-  }
-  throw new Error(`Could not resolve package.json next to ${here} (checked: ${CANDIDATE_PATHS.join(", ")})`);
-}
-
-export const VERSION = readPackageVersion();
+// The explicit `: string` keeps the ambient identifier out of dist/*.d.ts, which
+// tsup emits because tsup.config.ts sets `dts: true`.
+export const VERSION: string = __MCP_SERVER_VERSION__;
