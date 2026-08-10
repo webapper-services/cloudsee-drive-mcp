@@ -370,6 +370,10 @@ a clean `Authentication failed (HTTP 401)` (the row above) with no indication ro
 cause. **Update both `CLOUDSEE_API_KEY_ID` and `CLOUDSEE_API_KEY_SECRET` together whenever you
 rotate.**
 
+**Then restart the connector.** The server reads its environment once, at process start, so an
+edit to `claude_desktop_config.json` changes nothing until the MCP client reloads it. If the
+401 persists after you have corrected both values, this is usually why.
+
 ---
 
 ## 9. Development & contract drift

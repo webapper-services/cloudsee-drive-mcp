@@ -1,0 +1,21 @@
+# Line endings are pinned here because this tree lives in two places at once: inside the
+# csd-backend monorepo and, mirrored file-for-file, in the public cloudsee-drive-mcp repo.
+# Both clones sit on Windows with core.autocrlf=true, and CRLF had already been committed
+# into both histories, so the two working trees drifted apart on line endings alone. The
+# sync script compares file hashes, so that drift showed up as files "needing sync" when
+# not a character of content differed.
+#
+# LF everywhere, which is the norm for a published npm package and what contributors on
+# Linux and macOS expect.
+* text=auto eol=lf
+
+# PowerShell on Windows is the one place CRLF is worth keeping. This tree's only script is
+# start.ps1, and PowerShell 5.1 has already proven fussy about how these files are encoded.
+*.ps1 text eol=crlf
+
+# Binary, never touched. text=auto detects this on its own; stated explicitly so a future
+# reader does not have to trust the heuristic.
+*.png binary
+*.ico binary
+*.gz binary
+*.zip binary

@@ -65,6 +65,19 @@ npm install -g @webapper/cloudsee-drive-mcp
 
 Requires **Node.js ≥ 20**. No native dependencies — works on macOS, Linux, and Windows.
 
+On macOS that command usually fails the first time with `EACCES: permission denied, mkdir
+'/usr/local/lib/node_modules/@webapper'`. That is npm's global prefix pointing at a directory
+your user cannot write to — it is not specific to this package, and any system configured the
+same way behaves the same. Either install with `sudo`, or point npm at a prefix you own:
+
+```bash
+npm config set prefix ~/.npm-global
+export PATH="$HOME/.npm-global/bin:$PATH"   # add to ~/.zshrc or ~/.bashrc to keep it
+npm install -g @webapper/cloudsee-drive-mcp
+```
+
+The `npx` form in the quickstart above sidesteps this entirely — it needs no global install.
+
 ## Configuration
 
 All configuration is via environment variables (set them in the Claude Desktop `env` block,
