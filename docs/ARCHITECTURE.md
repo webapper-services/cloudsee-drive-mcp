@@ -25,7 +25,7 @@ flowchart TB
         direction TB
         tr["StdioServerTransport<br/>newline-delimited JSON-RPC frames"]
         sdk["McpServer — SDK 1.29<br/>dispatch · validate · advertise"]
-        reg["tool registry — 17 ToolDef<br/>read · download · write"]
+        reg["tool registry — 18 ToolDef<br/>read · download · write"]
         h["tool handler<br/>parse · resolveBucket · confirm · shape result"]
         cl["CloudSeeClient<br/>dual auth · retry · pagination · redaction"]
     end
@@ -54,8 +54,11 @@ Everything blue above is in this repo; the API is the one thing it doesn't own.
    missing credential is fatal and printed to **stderr**, then `process.exit(1)`.
 2. **`configureLogger({ level, redact: [secret] })`** ([`src/logger.ts`](../src/logger.ts)) —
    registers the secret for redaction **before anything else can log**.
-3. **`createServer(config)`** ([`src/server.ts`](../src/server.ts)) — constructs one
-   `CloudSeeClient`, one `McpServer`, and registers all 17 tools (next section).
+3. **`createServer(config, tools)`** ([`src/server.ts`](../src/server.ts)) — constructs one
+   `CloudSeeClient`, one `McpServer`, and registers the tool set it is handed (next section).
+   `allTools` (stdio) holds 18; `hostedTools` holds 17 — the shared names differ only in the
+   `upload_file` variant, and `upload_status` is stdio-only because only stdio starts background uploads
+   ([`src/tools/index.ts`](../src/tools/index.ts)).
 4. **`new StdioServerTransport()`** + **`server.connect(transport)`** — the SDK calls
    `transport.start()`, which attaches the `data`/`error` listeners on `process.stdin` and wires the
    SDK's request handlers (`initialize`, `tools/list`, `tools/call`, …). From here the process is
@@ -130,7 +133,7 @@ sequenceDiagram
     S-->>C: result { protocolVersion, capabilities:{tools:{listChanged:true}}, serverInfo }
     C--)S: notifications/initialized
     C->>S: tools/list
-    S-->>C: result { tools: [ 17 × {name, description, inputSchema, annotations} ] }
+    S-->>C: result { tools: [ 18 × {name, description, inputSchema, annotations} ] }
     Note over C,H: per tool call — repeats
     C->>S: tools/call { name, arguments }
     S->>S: look up tool · validate arguments
@@ -152,7 +155,7 @@ The actual frames on the wire (one per line):
 
 `serverInfo.name`/`version` come straight from `new McpServer({ name: "cloudsee-drive-mcp", version: VERSION })`
 ([`src/server.ts:16`](../src/server.ts)). The [`scripts/smoke.mjs`](../scripts/smoke.mjs) test performs
-exactly this handshake + `tools/list` and asserts 17 tools — fully offline, since listing makes no API call.
+exactly this handshake + `tools/list` and asserts 18 tools — fully offline, since listing makes no API call.
 
 ---
 
@@ -434,7 +437,8 @@ for the next page.
 
 ## Appendix A — tool → endpoint reference
 
-17 tools, all callable end-to-end — the gateway's RBAC/scope wiring is live, so a
+18 tools over stdio (17 hosted — upload_status reports on background uploads, which only stdio starts),
+all callable end-to-end — the gateway's RBAC/scope wiring is live, so a
 denial means the API key lacks the tool's scope. "Queued" = the POST enqueues the operation
 and returns a `RequestId`; it completes in the background, typically within 1–2 minutes.
 
@@ -449,7 +453,7 @@ and returns a `RequestId`; it completes in the background, typically within 1–
 | `get_file_tags` | `/storage/object/tagging` | `drive:read` | live |
 | `download_file` | `/storage/object/download-url` | `drive:read`+`drive:download` | live (pre-signed URL) |
 | `share_link` | `/storage/object/download-url` (`shareableLink`) | `drive:read`+`drive:download` | live |
-| `upload_file` | `/storage/upload/url` → `PUT` → `/storage/upload/complete` (multipart: `/storage/upload/multipart-urls` → `PUT`× → `/storage/upload/complete-parts`) | `drive:write` | live (single + multipart) |
+| `upload_file` | `/storage/object/detail` (collision probe) → `/storage/upload/url` → `PUT` → `/storage/upload/complete` (multipart: `/storage/upload/multipart-urls` → `PUT`× → `/storage/upload/complete-parts`) | `drive:write` | live. **stdio** takes `localPath`; **hosted** takes `content` (≤ 256 KB) — see [`src/tools/index.ts`](../src/tools/index.ts) |
 | `create_folder` | `/storage/folder/create` | `drive:write` | live |
 | `duplicate_file` | `/storage/object/duplicate` | `drive:write` | live |
 | `rename_file` | `/storage/object/rename-request` | `drive:write` | live — queued · **confirm** |

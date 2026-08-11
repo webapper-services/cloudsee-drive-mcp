@@ -1,5 +1,6 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { createServer } from "./server";
+import { hostedTools } from "./tools/index";
 import type { Config, HttpConfig } from "./config";
 
 // Shared OAuth resource-server helpers for the hosted transports (the Lambda
@@ -100,5 +101,7 @@ export function buildUserMcpServer(cfg: HttpConfig, userToken: string): McpServe
     logLevel: cfg.logLevel,
     defaultBucket: cfg.defaultBucket,
   };
-  return createServer(sessionConfig);
+  // hostedTools, not allTools: `upload_file` here takes the file's contents, because this
+  // server cannot read the caller's disk and the caller cannot PUT to S3 itself.
+  return createServer(sessionConfig, hostedTools);
 }

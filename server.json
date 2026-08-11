@@ -6,12 +6,12 @@
     "url": "https://github.com/webapper-services/cloudsee-drive-mcp",
     "source": "github"
   },
-  "version": "0.1.5",
+  "version": "1.0.0",
   "packages": [
     {
       "registryType": "npm",
       "identifier": "@webapper/cloudsee-drive-mcp",
-      "version": "0.1.5",
+      "version": "1.0.0",
       "transport": { "type": "stdio" },
       "environmentVariables": [
         {

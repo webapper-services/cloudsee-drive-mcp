@@ -1,0 +1,99 @@
+{
+  "manifest_version": "0.3",
+  "name": "cloudsee-drive",
+  "display_name": "CloudSee Drive",
+  "version": "1.0.0",
+  "description": "Browse, search, download, share, upload and organize your CloudSee Drive (Amazon S3) files in natural language.",
+  "long_description": "CloudSee Drive is a browser interface for Amazon S3. This extension lets Claude work with your drives directly: list them, browse and search folders, read file metadata and tags, and generate short-lived download and share links. With your permission it can also upload files, create folders, rename, move, duplicate, update metadata, restore archived (Glacier) objects, and delete files.\n\nBecause the extension runs on your own machine, `upload_file` takes a path and streams the file straight to storage — large files are uploaded in parts, with no size ceiling imposed by the conversation.\n\nDestructive actions ask for explicit confirmation before anything changes, and an upload never overwrites an existing file: a name that is already taken gets a timestamp appended.",
+  "author": {
+    "name": "Webapper",
+    "url": "https://www.webapper.com"
+  },
+  "icon": "icon.png",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/webapper-services/cloudsee-drive-mcp"
+  },
+  "homepage": "https://www.cloudsee.cloud",
+  "documentation": "https://github.com/webapper-services/cloudsee-drive-mcp#readme",
+  "support": "https://github.com/webapper-services/cloudsee-drive-mcp/issues",
+  "license": "MIT",
+  "keywords": ["cloudsee", "s3", "amazon-s3", "files", "storage", "file-management"],
+  "privacy_policies": ["https://github.com/webapper-services/cloudsee-drive-mcp/blob/main/PRIVACY.md"],
+  "server": {
+    "type": "node",
+    "entry_point": "server/index.js",
+    "mcp_config": {
+      "command": "node",
+      "args": ["${__dirname}/server/index.js"],
+      "env": {
+        "CLOUDSEE_API_KEY_ID": "${user_config.api_key_id}",
+        "CLOUDSEE_API_KEY_SECRET": "${user_config.api_key_secret}",
+        "CLOUDSEE_API_BASE_URL": "${user_config.api_base_url}",
+        "CLOUDSEE_DEFAULT_BUCKET": "${user_config.default_bucket}",
+        "CLOUDSEE_LOG_LEVEL": "${user_config.log_level}"
+      }
+    }
+  },
+  "user_config": {
+    "api_key_id": {
+      "type": "string",
+      "title": "API key ID",
+      "description": "From the CloudSee Drive dashboard — looks like AKIA…",
+      "required": true
+    },
+    "api_key_secret": {
+      "type": "string",
+      "title": "API key secret",
+      "description": "The matching secret. Shown only once when you create the key.",
+      "required": true,
+      "sensitive": true
+    },
+    "api_base_url": {
+      "type": "string",
+      "title": "API base URL",
+      "description": "Leave as-is unless you were told otherwise. UAT is https://drive-api-uat.cloudsee.cloud",
+      "required": false,
+      "default": "https://drive-api.cloudsee.cloud"
+    },
+    "default_bucket": {
+      "type": "string",
+      "title": "Default drive",
+      "description": "Optional. A drive (S3 bucket) name to use when you don't name one — saves repeating it.",
+      "required": false
+    },
+    "log_level": {
+      "type": "string",
+      "title": "Log level",
+      "description": "Optional. error | warn | info | debug. Use debug to record every API call for auditing (the secret is redacted).",
+      "required": false,
+      "default": "info"
+    }
+  },
+  "compatibility": {
+    "platforms": ["darwin", "win32", "linux"],
+    "runtimes": {
+      "node": ">=20.0.0"
+    }
+  },
+  "tools": [
+    { "name": "list_buckets", "description": "List the drives (S3 buckets) the account can access" },
+    { "name": "browse_folder", "description": "List the files and sub-folders inside a folder, with sorting and pagination" },
+    { "name": "search_files", "description": "Find files and folders by name keyword within a drive" },
+    { "name": "list_files", "description": "List a drive's files straight from storage, recursively" },
+    { "name": "recent_files", "description": "List the account's most recently accessed or modified files" },
+    { "name": "get_file_metadata", "description": "Get size, type, timestamps, storage class and other attributes for one file" },
+    { "name": "get_file_tags", "description": "Get the S3 object tags attached to a file" },
+    { "name": "download_file", "description": "Get a short-lived pre-signed download URL for a file" },
+    { "name": "share_link", "description": "Create a shareable, time-limited link to a file" },
+    { "name": "upload_file", "description": "Upload a file from this machine into a drive, in parts when it is large" },
+    { "name": "upload_status", "description": "Check progress on a large upload that is still running in the background" },
+    { "name": "create_folder", "description": "Create a new folder in a drive" },
+    { "name": "rename_file", "description": "Rename a file or folder (asks for confirmation)" },
+    { "name": "move_file", "description": "Move or copy a file or folder to another location (a move asks for confirmation)" },
+    { "name": "duplicate_file", "description": "Create a copy of a file in the same location" },
+    { "name": "delete_files", "description": "Permanently delete files or folders (asks for confirmation)" },
+    { "name": "update_metadata", "description": "Set a file's category, description, project and tags (asks for confirmation)" },
+    { "name": "restore_archived_file", "description": "Begin restoring an archived Glacier object so it can be downloaded (asks for confirmation)" }
+  ]
+}

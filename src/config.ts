@@ -21,13 +21,22 @@ export interface Config {
   logLevel: LogLevel;
 }
 
+/**
+ * An optional setting the user left blank arrives as an EMPTY STRING, not as an absent key —
+ * MCPB substitutes every declared `user_config` value into `env`, and a Claude Desktop `env`
+ * block behaves the same. Without this, `""` would fail `.url()` / `.min(1)` and the server
+ * would refuse to start over a field the user deliberately left empty.
+ */
+const blankToUndefined = (value: unknown): unknown =>
+  typeof value === "string" && value.trim() === "" ? undefined : value;
+
 const envSchema = z.object({
   CLOUDSEE_API_KEY_ID: z.string().trim().min(1, "is required (your CloudSee Drive API key id)"),
   CLOUDSEE_API_KEY_SECRET: z.string().trim().min(1, "is required (the matching API key secret)"),
-  CLOUDSEE_API_BASE_URL: z.string().url("must be a valid URL").optional(),
-  CLOUDSEE_DEFAULT_BUCKET: z.string().trim().min(1).optional(),
-  CLOUDSEE_TIMEOUT_MS: z.coerce.number().int().positive().optional(),
-  CLOUDSEE_LOG_LEVEL: z.enum(["error", "warn", "info", "debug"]).optional(),
+  CLOUDSEE_API_BASE_URL: z.preprocess(blankToUndefined, z.string().url("must be a valid URL").optional()),
+  CLOUDSEE_DEFAULT_BUCKET: z.preprocess(blankToUndefined, z.string().trim().min(1).optional()),
+  CLOUDSEE_TIMEOUT_MS: z.preprocess(blankToUndefined, z.coerce.number().int().positive().optional()),
+  CLOUDSEE_LOG_LEVEL: z.preprocess(blankToUndefined, z.enum(["error", "warn", "info", "debug"]).optional()),
 });
 
 /**
@@ -85,10 +94,10 @@ const httpEnvSchema = z.object({
   CLOUDSEE_OAUTH_ISSUER: z
     .string()
     .url("must be a valid URL (the CloudSee Drive OAuth issuer base, e.g. https://drive-oauth-uat.cloudsee.cloud)"),
-  CLOUDSEE_API_BASE_URL: z.string().url("must be a valid URL").optional(),
-  CLOUDSEE_DEFAULT_BUCKET: z.string().trim().min(1).optional(),
-  CLOUDSEE_TIMEOUT_MS: z.coerce.number().int().positive().optional(),
-  CLOUDSEE_LOG_LEVEL: z.enum(["error", "warn", "info", "debug"]).optional(),
+  CLOUDSEE_API_BASE_URL: z.preprocess(blankToUndefined, z.string().url("must be a valid URL").optional()),
+  CLOUDSEE_DEFAULT_BUCKET: z.preprocess(blankToUndefined, z.string().trim().min(1).optional()),
+  CLOUDSEE_TIMEOUT_MS: z.preprocess(blankToUndefined, z.coerce.number().int().positive().optional()),
+  CLOUDSEE_LOG_LEVEL: z.preprocess(blankToUndefined, z.enum(["error", "warn", "info", "debug"]).optional()),
 });
 
 /**

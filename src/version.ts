@@ -3,11 +3,12 @@
 // package.json beside it; doing this lookup at load time crashed init and made
 // every request return 502 on production (CSD-628).
 //
-// Every bundler entry point MUST declare the define. Three configs do:
+// Every bundler entry point MUST declare the define. Four configs do:
 //   server/tsup.config.ts        -> npm package (dist/index.js, dist/http.js)
+//   server/tsup.mcpb.config.ts   -> MCPB desktop extension (build/mcpb/server/index.js)
 //   infra/tsup.lambda.config.ts  -> Lambda bundle (infra/build/lambda/lambda.mjs)
 //   server/vitest.config.ts      -> unit tests, which run the TS sources directly
-// All three read the value from server/scripts/package-version.mjs.
+// All four read the value from server/scripts/package-version.mjs.
 //
 // A new entry point that forgets the define throws ReferenceError at load. That
 // is deliberate: fail loudly at startup rather than advertise a wrong version,

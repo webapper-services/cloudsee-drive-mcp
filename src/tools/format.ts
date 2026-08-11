@@ -9,7 +9,10 @@ export function summarize(data: unknown, opts: { maxItems?: number; maxChars?: n
   const maxChars = opts.maxChars ?? DEFAULT_MAX_CHARS;
   let json: string;
   try {
-    json = JSON.stringify(boundArrays(data, maxItems), null, 2);
+    // JSON.stringify RETURNS undefined for undefined (and for a function or symbol) rather than
+    // throwing, so the catch below never fires and every later string operation would blow up
+    // on it. An endpoint that answers with no body is a normal thing to render.
+    json = JSON.stringify(boundArrays(data, maxItems), null, 2) ?? String(data);
   } catch {
     json = String(data);
   }

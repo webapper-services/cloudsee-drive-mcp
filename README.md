@@ -56,14 +56,28 @@ That's it. The server runs locally on your machine; your API key never leaves it
 
 ## Installation
 
-`npx` (above) always runs the latest version. To install the `cloudsee-drive-mcp` binary
-globally instead:
+Requires **Node.js ≥ 20**. No native dependencies — works on macOS, Linux, and Windows.
+
+### As a Claude Desktop extension (no config file)
+
+The server is packaged as an **MCP Bundle (`.mcpb`)** — a one-click install that asks for your
+API key in a form instead of making you edit JSON. Build one from this repo with:
+
+```bash
+npm run build:mcpb        # → build/cloudsee-drive-<version>.mcpb
+```
+
+Packing needs the MCPB CLI (`npm i -g @anthropic-ai/mcpb`); without it the script still stages
+the bundle and prints the one command left to run. Open the resulting `.mcpb` with Claude
+Desktop to install it.
+
+### As an npm package
 
 ```bash
 npm install -g @webapper/cloudsee-drive-mcp
 ```
 
-Requires **Node.js ≥ 20**. No native dependencies — works on macOS, Linux, and Windows.
+or let `npx` fetch it on demand, as in the [Quickstart](#quickstart-5-minutes) above.
 
 On macOS that command usually fails the first time with `EACCES: permission denied, mkdir
 '/usr/local/lib/node_modules/@webapper'`. That is npm's global prefix pointing at a directory
@@ -108,7 +122,8 @@ Most tools operate on one **drive** (an S3 bucket): pass `bucketName`, or set
 | `get_file_tags` | Get a file's S3 tags | read |
 | `download_file` | Get a temporary pre-signed download URL | download |
 | `share_link` | Create a shareable, time-limited link | download |
-| `upload_file` | Upload a local file (single or multipart) | write |
+| `upload_file` | Upload a file — see [Uploading](#uploading) | write |
+| `upload_status` | Progress of a large upload running in the background (stdio only) | write |
 | `create_folder` | Create a folder | write |
 | `rename_file` | Rename a file/folder | write · **confirm** |
 | `move_file` | Move (or copy) a file/folder | write · **confirm** (move) |
@@ -116,6 +131,40 @@ Most tools operate on one **drive** (an S3 bucket): pass `bucketName`, or set
 | `delete_files` | Permanently delete objects | delete · **confirm** |
 | `update_metadata` | Update a file's metadata | write · **confirm** |
 | `restore_archived_file` | Un-archive a Glacier object | write · **confirm** |
+
+### Uploading
+
+`upload_file` has **one name and two shapes**, chosen by how the server is reached — you only
+ever see the one that applies:
+
+| Running as | Argument | Who reads the bytes | Size |
+| --- | --- | --- | --- |
+| **stdio** (this package, Claude Desktop / Claude Code) | `localPath` | The server, off your own disk | Any — over 8 MiB it uploads in 16 MiB parts |
+| **hosted** (a remote connector) | `content` + `encoding` | The bytes travel in the request | ≤ 256 KB |
+
+**Files over 8 MiB upload in the background.** An MCP client abandons a tool call after 60
+seconds, so a large upload cannot be waited on — it would be reported as a timeout while it was
+still succeeding. `upload_file` therefore returns an id straight away and keeps going; ask
+`upload_status` for progress. The file is in the drive once that says `completed`. Parts go up
+four at a time.
+
+The upload lives in this server process, so quitting the MCP client cancels it.
+
+The hosted shape exists because a remote server has no access to your disk, and a remote MCP
+client is normally blocked from uploading to storage itself. For anything larger than a few
+hundred kilobytes on a hosted connector, use the CloudSee web app.
+
+Both shapes behave the same in two ways that matter:
+
+- **Nothing is ever overwritten.** If the name is taken, the file is stored with a timestamp
+  appended (`report (30-07-2026 14:05).md`) and the tool tells you the name it used.
+- **The content type comes from the file name**, matching what storage signs the upload URL
+  with. Passing your own would risk a signature mismatch, so the tool doesn't accept one.
+
+> **Tip for `localPath`:** copy the name exactly. File names can contain characters that look
+> like a plain space but aren't — macOS screen recordings, for instance, use `U+202F` before
+> `AM`/`PM`. When a file isn't found, the error points at the near match and names the
+> character.
 
 ### `list_files` ids are not stable — don't use them for mutation
 
@@ -143,6 +192,24 @@ tool call runs. Four things worth knowing about it:
   conversation won't prompt again. Choose "Allow once" to review every call individually.
 - This is still a client-side safety prompt — the CloudSee API authorizes every operation
   server-side; confirmation is not the security boundary.
+
+## Privacy Policy
+
+Full text: **[PRIVACY.md](PRIVACY.md)** ·
+[hosted copy](https://github.com/webapper-services/cloudsee-drive-mcp/blob/main/PRIVACY.md)
+
+In short — the server is a **conduit**, not a destination:
+
+- **What it processes.** Only what a tool call needs: your API credentials (from the
+  environment), and the file names, paths, metadata, tags or file contents involved in the
+  operation you asked for.
+- **What it stores.** Nothing. There is no database, cache or log of your files; each request is
+  handled in memory and forgotten. Diagnostics go to stderr with the secret redacted.
+- **Who else sees it.** Your AI client, which issues the tool calls, and the CloudSee Drive API /
+  Amazon S3, which performs them. No analytics, no profiling, no model training, no resale.
+- **Retention.** None by this server. Files and account data live in CloudSee Drive under its own
+  policy; downloads and shares are short-lived pre-signed URLs.
+- **Contact.** privacy@webapper.net · security reports per [SECURITY.md](SECURITY.md).
 
 ## Security
 
@@ -172,8 +239,9 @@ This wraps CloudSee Drive's public API (the `/v1/*` gateway).
 - **`rename_file`, `move_file` (and copy) and `delete_files` are queued operations**: the tool
   returns a queue `RequestId` and the operation completes in the background, typically within
   1–2 minutes — verify by listing.
-- `upload_file` handles files of any size: a single pre-signed PUT up to 8 MiB, and multipart
-  (8 MiB parts) above that — chosen automatically.
+- **`upload_file` differs by transport** (see [Uploading](#uploading)). Over stdio it takes a
+  path and handles any size — one pre-signed PUT up to 8 MiB, multipart above that. On a hosted
+  connector it takes the file's contents instead, capped at 256 KB.
 
 ## Development
 

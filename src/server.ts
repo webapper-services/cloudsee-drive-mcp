@@ -1,6 +1,6 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { CloudSeeClient } from "./client/CloudSeeClient";
-import { allTools } from "./tools/index";
+import { allTools, type ToolDef } from "./tools/index";
 import { logger } from "./logger";
 import { VERSION } from "./version";
 import type { Config } from "./config";
@@ -12,13 +12,14 @@ import type { Config } from "./config";
  * transport), and are logged to stderr with the secret redacted.
  *
  * For the hosted server, one server is built per request from the caller's
- * decoded OAuth credential (see `oauthResource.buildUserMcpServer`).
+ * decoded OAuth credential, with the hosted tool set (see
+ * `oauthResource.buildUserMcpServer` and `tools/index.hostedTools`).
  */
-export function createServer(config: Config): McpServer {
+export function createServer(config: Config, tools: ToolDef[] = allTools): McpServer {
   const client = new CloudSeeClient(config);
   const server = new McpServer({ name: "cloudsee-drive-mcp", version: VERSION });
 
-  for (const tool of allTools) {
+  for (const tool of tools) {
     server.registerTool(
       tool.name,
       {
@@ -39,6 +40,6 @@ export function createServer(config: Config): McpServer {
     );
   }
 
-  logger.info(`registered ${allTools.length} tools`);
+  logger.info(`registered ${tools.length} tools`);
   return server;
 }

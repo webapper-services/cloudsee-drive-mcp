@@ -53,6 +53,7 @@
   },
   "scripts": {
     "build": "tsup",
+    "build:mcpb": "tsup --config tsup.mcpb.config.ts && node scripts/build-mcpb.mjs",
     "dev": "tsup --watch",
     "start": "node dist/index.js",
     "start:http": "node dist/http.js",
@@ -62,6 +63,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "sync:contract": "node scripts/sync-contract.mjs",
+    "sync:version": "node scripts/sync-version.mjs",
+    "version": "node scripts/sync-version.mjs",
     "prepublishOnly": "npm run build"
   },
   "dependencies": {

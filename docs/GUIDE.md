@@ -121,7 +121,7 @@ The `.env` is for your shell during development — the server itself only reads
 npm run build && node scripts/smoke.mjs
 ```
 
-Expected: `tools registered: 17`, the tool list, the destructive set, then `SMOKE OK`.
+Expected: `tools registered: 18`, the tool list, the destructive set, then `SMOKE OK`.
 
 ### Manual one-shot over stdio (JSON-RPC)
 
@@ -141,7 +141,7 @@ printf '%s\n%s\n' \
 
 ## 5. Tools & example commands
 
-17 tools. "Access" is the seed scope the backing endpoint requires. **confirm** = two-step
+18 tools. "Access" is the seed scope the backing endpoint requires. **confirm** = two-step
 confirmation (see below). Most tools need a **drive** — pass `bucketName` (or set
 `CLOUDSEE_DEFAULT_BUCKET`); `recent_files` and `list_buckets` don't.
 
@@ -156,7 +156,8 @@ confirmation (see below). Most tools need a **drive** — pass `bucketName` (or 
 | `get_file_tags` | A file's S3 tags | read | "What tags are on `reports/q3.pdf`?" |
 | `download_file` | Temporary pre-signed download URL | download | "Give me a download link for `q3.pdf`." |
 | `share_link` | Shareable, time-limited link | download | "Create a share link for `q3.pdf`." |
-| `upload_file` | Upload a local file (single or multipart) | write | "Upload `./q3.pdf` to `reports/`." |
+| `upload_file` | Upload a file (path over stdio, contents when hosted) | write | "Upload `./q3.pdf` to `reports/`." |
+| `upload_status` † | Progress of a large upload running in the background | write | "How's that upload going?" |
 | `create_folder` | Create a folder | write | "Create a `2026/` folder." |
 | `rename_file` | Rename a file/folder | write · **confirm** | "Rename `old.pdf` to `new.pdf`." |
 | `move_file` | Move (or copy) a file/folder | write · **confirm** (move) | "Move `a.pdf` into `archive/`." |
@@ -334,8 +335,21 @@ Other notes:
 
 - **A drive is required** for everything except `recent_files` and `list_buckets` — pass
   `bucketName`, or set `CLOUDSEE_DEFAULT_BUCKET`. Missing → a clear "specify a drive" message.
-- **`upload_file`** handles files of any size: a single pre-signed PUT up to 8 MiB, and
-  multipart (8 MiB parts) above that — chosen automatically.
+- **`upload_file` has two shapes, one per transport.** Over **stdio** it takes `localPath` and
+  reads the file off the machine running the server — your own — handling any size (one
+  pre-signed PUT up to 8 MiB, 8 MiB parts above that). On a **hosted** connector that is
+  meaningless (the path would resolve against the server's disk) and a remote client cannot
+  perform the pre-signed PUT itself either — verified against production 2026-07-30, refused
+  with `Host not in allowlist: <bucket>.s3.amazonaws.com`. So the hosted shape takes `content` +
+  `encoding` instead, capped at 256 KB; larger files go through the web app.
+- **Neither shape overwrites.** A taken name becomes `report (30-07-2026 14:05).md`, and the
+  tool reports the name it used.
+- **The content type is derived from the file name**, not accepted as input — storage signs the
+  upload URL with a type it derives the same way, and any other value gets a
+  `403 SignatureDoesNotMatch` from S3.
+- **`localPath` names must be exact.** A file name can contain characters that render like a
+  space but aren't (macOS screen recordings use `U+202F` before `AM`/`PM`). On a miss the error
+  lists the near match and names the offending character.
 - **`recent_files` pagination** reflects the backend's token: it advertises a next page only
   when a page comes back full, and replays the API's continuation token verbatim. On very
   small datasets the backend may return the same token repeatedly.

@@ -1,9 +1,11 @@
-import { open, readFile, stat } from "node:fs/promises";
-import { basename } from "node:path";
+import { open, readFile, readdir, stat } from "node:fs/promises";
+import { basename, dirname } from "node:path";
 import { z } from "zod";
 import { CloudSeeError } from "../errors";
 import { confirmShape, confirmationPreview } from "../confirm";
 import { summarize } from "./format";
+import { mimeForFileName } from "./mime";
+import { createJob, finishJob, getJob, listJobs, recordPart, type UploadJob } from "../uploads";
 import { bucketField, resolveBucket, textResult, type ToolContext, type ToolDef } from "./types";
 
 // Appended to every write/delete tool: the public API's RBAC is live,
@@ -11,9 +13,16 @@ import { bucketField, resolveBucket, textResult, type ToolContext, type ToolDef 
 const RBAC_NOTE =
   " (Write access is authorized server-side by the public API's RBAC — a denial means the API key lacks this tool's scope, not a tool failure.)";
 
-const MULTIPART_THRESHOLD = 8 * 1024 * 1024; // files larger than this switch to multipart
-const PART_SIZE = 8 * 1024 * 1024; // bytes per multipart part (>= S3's 5 MiB minimum)
+const MULTIPART_THRESHOLD = 8 * 1024 * 1024; // above this the upload is split into parts
+const PART_SIZE = 16 * 1024 * 1024; // matches the web uploader's chunk size; >= S3's 5 MiB minimum
 const MAX_PARTS = 10_000; // S3's hard limit on parts per multipart upload
+
+// Parts uploaded at once. Parallelism does NOT create bandwidth — on a saturated link this
+// changes nothing — but it keeps a high-latency or high-bandwidth-delay-product link busy
+// instead of idling between round trips. Kept low because each worker holds its own PART_SIZE
+// buffer: 4 x 16 MiB is the memory ceiling. (The web uploader runs 25, but a browser streams
+// Blobs rather than buffering them.)
+const PART_CONCURRENCY = 4;
 
 function pickUrl(data: unknown): string | undefined {
   if (typeof data === "string") return data;
@@ -49,17 +58,105 @@ function pickKey(data: unknown): string | undefined {
   return undefined;
 }
 
-// ---- upload_file → POST /storage/upload/url then /storage/upload/complete (drive:write) ----
+// ============================================================================
+// upload_file — ONE tool name, two schemas, chosen by transport.
+//
+//   stdio  : `localPath`  — server and user share a machine, so the server reads the file
+//   hosted : `content`    — the server has no access to the caller's disk, so the bytes
+//                           travel in the tool call and the server does the PUT
+//
+// Only one of the two is ever registered (see tools/index.ts), so a caller sees exactly one
+// `upload_file` whose schema says what it needs. Both share the helpers below, so collision
+// handling and content-type resolution behave identically.
+// ============================================================================
+
+type UploadClient = ToolContext["client"];
+
+/** The server concatenates dirPath+fileName verbatim, so a folder needs its trailing slash. */
+function normalizeFolder(folder: string): string {
+  return folder && !folder.endsWith("/") ? `${folder}/` : folder;
+}
+
+/** "report.md" → "report (30-07-2026 14:05).md" — the web uploader's collision rule
+ *  (StorageContext.uploadSingle), so an upload never silently overwrites. */
+function withTimestampSuffix(fileName: string, now: Date): string {
+  const pad = (n: number): string => String(n).padStart(2, "0");
+  const stamp =
+    `${pad(now.getDate())}-${pad(now.getMonth() + 1)}-${now.getFullYear()} ` +
+    `${pad(now.getHours())}:${pad(now.getMinutes())}`;
+  const dot = fileName.lastIndexOf(".");
+  return dot > 0 ? `${fileName.slice(0, dot)} (${stamp})${fileName.slice(dot)}` : `${fileName} (${stamp})`;
+}
+
+/** Is the key already taken? A failed lookup counts as "free": /storage/object/detail errors
+ *  for a missing object, and a read-scope denial must not block a write the caller may make. */
+async function objectExists(client: UploadClient, bucketName: string, objectKey: string): Promise<boolean> {
+  try {
+    const data = await client.post("/storage/object/detail", { bucketName, objectKey });
+    if (!data) return false;
+    if (Array.isArray(data)) return data.length > 0;
+    return typeof data === "object" ? Object.keys(data).length > 0 : Boolean(data);
+  } catch {
+    return false;
+  }
+}
+
+/** Resolve the final stored name, renaming on collision, and the content type storage will
+ *  sign the URL with. Shared so both variants agree. */
+async function resolveTarget(
+  client: UploadClient,
+  bucketName: string,
+  dirPath: string,
+  requestedName: string,
+): Promise<{ fileName: string; contentType: string; key: string; renamed: boolean }> {
+  const taken = await objectExists(client, bucketName, `${dirPath}${requestedName}`);
+  const fileName = taken ? withTimestampSuffix(requestedName, new Date()) : requestedName;
+  // Storage IGNORES the content type we ask for, re-derives one from the file name and signs
+  // the URL with THAT, returning only the URL. Send anything else and S3 answers
+  // 403 SignatureDoesNotMatch. So derive the same value. See src/tools/mime.ts.
+  return { fileName, contentType: mimeForFileName(fileName), key: `${dirPath}${fileName}`, renamed: taken };
+}
+
+/**
+ * "Local file not found" is technically true but useless when the name differs by an invisible
+ * character — a real case here was a macOS screen recording whose time separator is U+202F
+ * NARROW NO-BREAK SPACE, not a plain space. List the folder and point at the near match.
+ */
+async function notFoundError(localPath: string): Promise<CloudSeeError> {
+  const wanted = basename(localPath);
+  let hint = "";
+  try {
+    const siblings = await readdir(dirname(localPath) || ".");
+    // JS \s covers the Unicode space separators — U+00A0 and U+202F included, which is
+    // exactly the class that makes two names look identical without matching.
+    const norm = (s: string): string => s.replace(/\s+/g, " ").toLowerCase();
+    const close = siblings.filter((s) => norm(s) === norm(wanted) || s.toLowerCase() === wanted.toLowerCase());
+    if (close.length) {
+      const detail = close
+        .map((s) => {
+          const odd = [...s]
+            .filter((c) => c.codePointAt(0)! > 0x7e)
+            .map((c) => `U+${c.codePointAt(0)!.toString(16).toUpperCase().padStart(4, "0")}`);
+          return `  ${JSON.stringify(s)}${odd.length ? `  ← contains ${[...new Set(odd)].join(", ")}` : ""}`;
+        })
+        .join("\n");
+      hint = `\n\nA file in that folder differs only by invisible/typographic characters — copy this name exactly:\n${detail}`;
+    }
+  } catch {
+    /* the folder itself is unreadable; the plain message stands */
+  }
+  return new CloudSeeError(`Local file not found: ${localPath}${hint}`, { code: "file_not_found" });
+}
+
+// ---- upload_file (stdio) → POST /storage/upload/url then /storage/upload/complete ----
 const uploadSchema = z.object({
   bucketName: bucketField,
-  localPath: z.string().min(1).describe("Path to the local file to upload (absolute, or relative to the server's working directory)."),
-  destinationFolder: z.string().describe("Destination folder/prefix in the drive. Empty = drive root."),
+  localPath: z.string().min(1).describe("Path to the file to upload, on the machine running this server. Copy the name exactly — invisible characters in a file name are a common cause of 'not found'."),
+  destinationFolder: z.string().optional().describe("Destination folder/prefix in the drive. Omit or empty = drive root."),
   fileName: z.string().optional().describe("Name to store the file as. Defaults to the local file's name."),
-  contentType: z.string().optional().describe("MIME type. Defaults to application/octet-stream."),
   storageClass: z.string().optional().describe("Optional S3 storage class (e.g. STANDARD, INTELLIGENT_TIERING)."),
 });
-type UploadArgs = z.infer<typeof uploadSchema>;
-type UploadClient = ToolContext["client"];
+type UploadArgs = z.infer<typeof uploadSchema> & { destinationFolder: string };
 
 // Single-file path: one pre-signed PUT then a finalize. Used for files up to
 // MULTIPART_THRESHOLD. Returns the human-readable result text.
@@ -118,6 +215,7 @@ async function uploadMultipart(
   fileName: string,
   contentType: string,
   size: number,
+  jobId?: string,
 ): Promise<string> {
   const numParts = Math.ceil(size / PART_SIZE);
   if (numParts > MAX_PARTS) {
@@ -143,44 +241,86 @@ async function uploadMultipart(
   const urlMap = urls as Record<string, unknown>;
 
   const fh = await open(a.localPath, "r");
+  let assembled = false;
   try {
-    const parts: Array<{ ETag: string; PartNumber: number }> = [];
-    const buffer = Buffer.allocUnsafe(PART_SIZE);
-    for (let index = 0; index < numParts; index++) {
-      const partUrl = pickUrl(urlMap[index]);
-      if (!partUrl) throw new CloudSeeError(`Missing upload URL for part ${index + 1}.`, { code: "no_part_urls" });
+    // Indexed by part number - 1, so a concurrent pool can fill it out of order and the
+    // finalize call still sends parts in the ascending order S3 requires.
+    const parts: Array<{ ETag: string; PartNumber: number }> = new Array(numParts);
 
-      const position = index * PART_SIZE;
-      const length = Math.min(PART_SIZE, size - position);
-      const { bytesRead } = await fh.read(buffer, 0, length, position);
-      // Copy out of the reused buffer — the next iteration overwrites it while
-      // fetch may still hold a reference otherwise.
-      const body = new Uint8Array(buffer.subarray(0, bytesRead));
+    let nextIndex = 0;
+    const workers = Array.from({ length: Math.min(PART_CONCURRENCY, numParts) }, async () => {
+      // One buffer per worker: sharing would let a finished read be overwritten while fetch
+      // still holds a reference to it.
+      const buffer = Buffer.allocUnsafe(PART_SIZE);
+      for (;;) {
+        const index = nextIndex++;
+        if (index >= numParts) return;
 
-      const put = await fetch(partUrl, { method: "PUT", headers: { "Content-Type": contentType }, body });
-      if (!put.ok) {
-        throw new CloudSeeError(`Upload of part ${index + 1} failed (HTTP ${put.status}).`, { status: put.status, code: "part_upload_failed" });
+        const partUrl = pickUrl(urlMap[index]);
+        if (!partUrl) throw new CloudSeeError(`Missing upload URL for part ${index + 1}.`, { code: "no_part_urls" });
+
+        const position = index * PART_SIZE;
+        const length = Math.min(PART_SIZE, size - position);
+        // Positional reads ignore the file cursor, so workers can read the same handle safely.
+        const { bytesRead } = await fh.read(buffer, 0, length, position);
+        const body = new Uint8Array(buffer.subarray(0, bytesRead));
+
+        const put = await fetch(partUrl, { method: "PUT", headers: { "Content-Type": contentType }, body });
+        if (!put.ok) {
+          throw new CloudSeeError(`Upload of part ${index + 1} failed (HTTP ${put.status}).`, { status: put.status, code: "part_upload_failed" });
+        }
+        const etag = put.headers.get("etag");
+        if (!etag) throw new CloudSeeError(`Storage did not return an ETag for part ${index + 1}; cannot finalize.`, { code: "no_etag" });
+        parts[index] = { ETag: etag, PartNumber: index + 1 };
+        if (jobId) recordPart(jobId, bytesRead);
       }
-      const etag = put.headers.get("etag");
-      if (!etag) throw new CloudSeeError(`Storage did not return an ETag for part ${index + 1}; cannot finalize.`, { code: "no_etag" });
-      parts.push({ ETag: etag, PartNumber: index + 1 });
-    }
+    });
+    // A rejecting worker leaves the others running; awaiting all of them before rethrowing
+    // keeps the abort below from racing an in-flight PUT.
+    const settled = await Promise.allSettled(workers);
+    const failure = settled.find((r): r is PromiseRejectedResult => r.status === "rejected");
+    if (failure) throw failure.reason;
 
-    const complete = await client.post("/storage/upload/complete-parts", {
+    // TWO calls are required, and missing the second one is silent. `complete-parts` only
+    // assembles the S3 multipart upload (StorageService.completeMultiUpload → s3Repo, nothing
+    // else); the object then exists in the bucket but has no index entry, so the drive shows a
+    // folder size with no file in it and get_file_metadata returns null. Registration is a
+    // separate call — the web uploader makes it too, for single and multipart alike
+    // (StorageContext.completeUploadProcess → completeUploadFile).
+    await client.post("/storage/upload/complete-parts", {
       bucketName,
       dirPath: a.destinationFolder,
       fileName,
       uploadId,
       parts,
     });
-    return `Uploaded "${fileName}" (${size} bytes, ${numParts} parts) to "${a.destinationFolder || "/"}".\n\n${summarize(complete)}`;
-  } catch (err) {
-    // Best-effort abort: an empty parts list tells the server to abort the
-    // multipart upload. Swallow its failure so the original cause surfaces.
+    assembled = true;
+
+    let registered: unknown;
     try {
-      await client.post("/storage/upload/complete-parts", { bucketName, dirPath: a.destinationFolder, fileName, uploadId, parts: [] });
-    } catch {
-      /* abort is best-effort */
+      registered = await client.post("/storage/upload/complete", {
+        bucketName,
+        dirPath: a.destinationFolder,
+        objects: [{ fileName, key: `${a.destinationFolder}${fileName}`, contentType, size }],
+      });
+    } catch (err) {
+      const reason = err instanceof Error ? err.message : String(err);
+      throw new CloudSeeError(
+        `All ${numParts} parts uploaded and the object was assembled, but registering it in the drive failed: ${reason}. The file is in storage yet will not appear in listings — retry the upload, or remove it via the CloudSee app.`,
+        { code: "finalize_failed" },
+      );
+    }
+    return `Uploaded "${fileName}" (${size} bytes, ${numParts} parts) to "${a.destinationFolder || "/"}".\n\n${summarize(registered)}`;
+  } catch (err) {
+    // Best-effort abort: an empty parts list tells the server to abort the multipart upload.
+    // Skipped once the parts are assembled — there is no longer an in-flight upload to abort,
+    // and the object that now exists is not something an abort would clean up anyway.
+    if (!assembled) {
+      try {
+        await client.post("/storage/upload/complete-parts", { bucketName, dirPath: a.destinationFolder, fileName, uploadId, parts: [] });
+      } catch {
+        /* abort is best-effort */
+      }
     }
     throw err;
   } finally {
@@ -188,43 +328,251 @@ async function uploadMultipart(
   }
 }
 
-const uploadFile: ToolDef = {
+const uploadFileLocal: ToolDef = {
   name: "upload_file",
   title: "Upload file",
   description:
-    "Upload a local file to a folder in a drive. Requires the drive (bucketName). Reads the file from the local machine, requests pre-signed upload URL(s), uploads the bytes to storage, then finalizes the object. Files up to 8 MiB use a single upload; larger files are uploaded in parts automatically." + RBAC_NOTE,
+    "Upload a file into a folder of a drive. The file is read from the machine running this server — which, over this connection, is your own machine — so pass its path. Requires the drive (bucketName). Files up to 8 MiB are sent in one piece; larger ones are split into parts automatically. If the name is already taken, a timestamped name is used instead, so an existing file is never overwritten." +
+    RBAC_NOTE,
   endpoint: { method: "POST", path: "/storage/upload/url", scopes: ["drive:write"] },
   inputSchema: uploadSchema.shape,
   annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
   handler: async (args, { client, defaultBucket }) => {
     const parsed = uploadSchema.parse(args);
-    // The server concatenates dirPath+fileName verbatim at presign and multipart
-    // finalize (no slash inserted), so a folder without a trailing "/" would
-    // produce a mangled key. Normalize once for every path below.
-    const a: UploadArgs = {
-      ...parsed,
-      destinationFolder:
-        parsed.destinationFolder && !parsed.destinationFolder.endsWith("/")
-          ? `${parsed.destinationFolder}/`
-          : parsed.destinationFolder,
-    };
-    const bucketName = resolveBucket(a.bucketName, defaultBucket);
-    const fileName = a.fileName ?? basename(a.localPath);
-    const contentType = a.contentType ?? "application/octet-stream";
+    const bucketName = resolveBucket(parsed.bucketName, defaultBucket);
+    const dirPath = normalizeFolder(parsed.destinationFolder ?? "");
 
     let info;
     try {
-      info = await stat(a.localPath);
+      info = await stat(parsed.localPath);
     } catch {
-      throw new CloudSeeError(`Local file not found: ${a.localPath}`, { code: "file_not_found" });
+      throw await notFoundError(parsed.localPath);
     }
-    if (!info.isFile()) throw new CloudSeeError(`Not a regular file: ${a.localPath}`, { code: "not_a_file" });
+    if (!info.isFile()) throw new CloudSeeError(`Not a regular file: ${parsed.localPath}`, { code: "not_a_file" });
 
-    const text =
-      info.size > MULTIPART_THRESHOLD
-        ? await uploadMultipart(client, bucketName, a, fileName, contentType, info.size)
-        : await uploadSingle(client, bucketName, a, fileName, contentType, info.size);
-    return textResult(text);
+    // Reject an impossible size before any network call, so a doomed upload costs nothing.
+    const partCount = Math.ceil(info.size / PART_SIZE);
+    if (info.size > MULTIPART_THRESHOLD && partCount > MAX_PARTS) {
+      throw new CloudSeeError(
+        `File needs ${partCount} parts, over the ${MAX_PARTS}-part limit. Use the CloudSee web app for very large files.`,
+        { code: "too_many_parts" },
+      );
+    }
+
+    const requestedName = parsed.fileName ?? basename(parsed.localPath);
+    const { fileName, contentType, key, renamed } = await resolveTarget(client, bucketName, dirPath, requestedName);
+    const a: UploadArgs = { ...parsed, destinationFolder: dirPath };
+    const note = renamed ? `\n\n(Stored as "${fileName}" — "${requestedName}" was already taken.)` : "";
+
+    if (info.size <= MULTIPART_THRESHOLD) {
+      const text = await uploadSingle(client, bucketName, a, fileName, contentType, info.size);
+      return textResult(`${text}${note}`);
+    }
+
+    // Past this size the upload cannot be waited on: an MCP client abandons a tool call after
+    // 60s and nothing the server sends reliably extends that, so a multi-hundred-megabyte
+    // upload would always be reported as a timeout even while it was succeeding. Start it,
+    // hand back a handle, and let `upload_status` report on it — the same shape rename/move/
+    // delete already use.
+    const totalParts = Math.ceil(info.size / PART_SIZE);
+    const job = createJob({
+      bucketName,
+      fileName,
+      key,
+      sizeBytes: info.size,
+      partSize: PART_SIZE,
+      totalParts,
+    });
+
+    void uploadMultipart(client, bucketName, a, fileName, contentType, info.size, job.id).then(
+      () => finishJob(job.id),
+      (err: unknown) => finishJob(job.id, err instanceof Error ? err.message : String(err)),
+    );
+
+    return textResult(
+      `Upload started in the background — this file is too large to finish inside a single tool call.\n\n` +
+        `  id        ${job.id}\n` +
+        `  file      ${fileName} (${formatBytes(info.size)}, ${contentType})\n` +
+        `  into      ${bucketName}:${a.destinationFolder || "/"}\n` +
+        `  parts     ${totalParts} x ${formatBytes(PART_SIZE)}, ${PART_CONCURRENCY} at a time\n\n` +
+        `Check on it with upload_status (id "${job.id}"). The file appears in the drive only once ` +
+        `it reports "completed" — do not report it as uploaded before then.${note}`,
+    );
+  },
+};
+
+// ---- upload_status → reads the in-process registry; makes no API call ----
+const uploadStatusSchema = z.object({
+  uploadId: z
+    .string()
+    .optional()
+    .describe("The id returned by upload_file. Omit to list every upload this server has tracked, newest first."),
+});
+
+/** Human-readable size — the numbers here are for a person reading a progress line. */
+function formatBytes(bytes: number): string {
+  if (bytes >= 1024 * 1024 * 1024) return `${(bytes / 1024 / 1024 / 1024).toFixed(2)} GiB`;
+  if (bytes >= 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(1)} MiB`;
+  if (bytes >= 1024) return `${(bytes / 1024).toFixed(1)} KiB`;
+  return `${bytes} bytes`;
+}
+
+function describeJob(job: UploadJob): string {
+  const elapsed = ((job.finishedAt ?? Date.now()) - job.startedAt) / 1000;
+  const percent = job.sizeBytes > 0 ? Math.floor((job.bytesUploaded / job.sizeBytes) * 100) : 0;
+  const lines = [
+    `${job.id}  ${job.state.toUpperCase()}`,
+    `  file     ${job.fileName} (${formatBytes(job.sizeBytes)}) -> ${job.bucketName}:${job.key}`,
+    `  progress ${job.completedParts}/${job.totalParts} parts, ${formatBytes(job.bytesUploaded)} (${percent}%)`,
+    `  elapsed  ${elapsed.toFixed(0)}s`,
+  ];
+  if (job.state === "running" && job.completedParts > 0) {
+    const rate = job.bytesUploaded / Math.max(elapsed, 1);
+    const remaining = (job.sizeBytes - job.bytesUploaded) / Math.max(rate, 1);
+    lines.push(`  eta      ~${Math.ceil(remaining)}s at ${formatBytes(rate)}/s`);
+  }
+  if (job.error) lines.push(`  error    ${job.error}`);
+  return lines.join("\n");
+}
+
+const uploadStatus: ToolDef = {
+  name: "upload_status",
+  title: "Check a background upload",
+  description:
+    "Report progress on an upload started by 'upload_file' that was too large to finish inside one tool call. Give it the id upload_file returned, or omit the id to list every tracked upload. States are running, completed and failed; a file is only in the drive once its upload reports completed. This reads progress held in this server process and makes no API call, so it is safe to poll." +
+    RBAC_NOTE,
+  // No endpoint of its own; declared against the presign path it reports on so the
+  // contract-drift test still has something real to match.
+  endpoint: { method: "POST", path: "/storage/upload/multipart-urls", scopes: ["drive:write"] },
+  inputSchema: uploadStatusSchema.shape,
+  annotations: { readOnlyHint: true, openWorldHint: false },
+  handler: async (args) => {
+    const a = uploadStatusSchema.parse(args);
+
+    if (a.uploadId) {
+      const job = getJob(a.uploadId);
+      if (!job) {
+        throw new CloudSeeError(
+          `No upload with id "${a.uploadId}". Uploads are tracked in memory, so a restart of this server clears them; the id is only valid for this session.`,
+          { code: "unknown_upload" },
+        );
+      }
+      return textResult(describeJob(job));
+    }
+
+    const all = listJobs();
+    if (all.length === 0) {
+      return textResult("No background uploads have been started in this session.");
+    }
+    return textResult(all.map(describeJob).join("\n\n"));
+  },
+};
+
+// ---- upload_file (hosted) → same three calls, but the bytes arrive in the tool call ----
+// A hosted server cannot read the caller's disk, and a hosted MCP client is normally barred
+// from reaching *.s3.amazonaws.com itself (verified against production 2026-07-30:
+// "Host not in allowlist: <bucket>.s3.amazonaws.com"), so neither a path nor a pre-signed
+// handoff works there. Carrying the bytes through the request is what is left.
+//
+// The ceiling is the caller's context budget, not the transport: base64 inflates 33% and
+// tokenizes at ~3-4 chars/token, so ~256 KB is already ~90k tokens. Refuse beyond that rather
+// than let a caller burn its whole context and fail anyway.
+const MAX_INLINE_BYTES = 256 * 1024;
+
+/** Buffer.from silently DROPS invalid base64 characters, which would store a quietly
+ *  corrupted file, so a base64 payload is verified by re-encoding it. */
+function decodeInlineContent(content: string, encoding: "utf8" | "base64"): Buffer {
+  if (encoding === "utf8") return Buffer.from(content, "utf8");
+  const cleaned = content.replace(/\s+/g, "");
+  const decoded = Buffer.from(cleaned, "base64");
+  const strip = (s: string): string => s.replace(/=+$/, "");
+  if (strip(decoded.toString("base64")) !== strip(cleaned)) {
+    throw new CloudSeeError(
+      "`content` is not valid base64. Send standard base64 with encoding='base64', or plain text with encoding='utf8'.",
+      { code: "bad_base64" },
+    );
+  }
+  return decoded;
+}
+
+const uploadInlineSchema = z.object({
+  bucketName: bucketField,
+  destinationFolder: z.string().optional().describe("Destination folder/prefix in the drive. Omit or empty = drive root."),
+  fileName: z.string().min(1).describe("Name to store the file as, WITH its extension — the extension sets the stored content type."),
+  content: z
+    .string()
+    .min(1)
+    .describe("The file's contents: plain text when encoding is 'utf8' (the default), or standard base64 when it is 'base64'."),
+  encoding: z
+    .enum(["utf8", "base64"])
+    .optional()
+    .describe("How 'content' is encoded. Use 'base64' for any binary file (images, PDFs, video, archives). Default 'utf8'."),
+  storageClass: z.string().optional().describe("Optional S3 storage class (e.g. STANDARD, INTELLIGENT_TIERING)."),
+});
+
+const uploadFileInline: ToolDef = {
+  name: "upload_file",
+  title: "Upload file",
+  description:
+    "Upload a file into a folder of a drive by passing its contents — text as-is, or binary as base64. Requires the drive (bucketName). The whole file travels in this request, so it suits documents and other modest files; anything larger than a few hundred kilobytes should go through the CloudSee web app instead. If the name is already taken, a timestamped name is used, so an existing file is never overwritten." +
+    RBAC_NOTE,
+  endpoint: { method: "POST", path: "/storage/upload/url", scopes: ["drive:write"] },
+  inputSchema: uploadInlineSchema.shape,
+  annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
+  handler: async (args, { client, defaultBucket }) => {
+    const a = uploadInlineSchema.parse(args);
+    const bucketName = resolveBucket(a.bucketName, defaultBucket);
+    const dirPath = normalizeFolder(a.destinationFolder ?? "");
+
+    const bytes = decodeInlineContent(a.content, a.encoding ?? "utf8");
+    if (bytes.byteLength > MAX_INLINE_BYTES) {
+      throw new CloudSeeError(
+        `That file is ${bytes.byteLength} bytes; this tool accepts up to ${MAX_INLINE_BYTES} because the whole payload travels in the request. Upload larger files through the CloudSee web app.`,
+        { code: "content_too_large" },
+      );
+    }
+
+    const { fileName, contentType, key, renamed } = await resolveTarget(client, bucketName, dirPath, a.fileName);
+
+    const presign = await client.post<Record<string, unknown>>("/storage/upload/url", {
+      bucketName,
+      dirPath,
+      fileName,
+      contentType,
+      storageClass: a.storageClass,
+    });
+    const uploadUrl = pickUrl(presign);
+    if (!uploadUrl) throw new CloudSeeError("The API did not return a usable upload URL.", { code: "no_upload_url" });
+    const objectKey = pickKey(presign) ?? key;
+
+    const put = await fetch(uploadUrl, {
+      method: "PUT",
+      headers: { "Content-Type": contentType },
+      body: new Uint8Array(bytes),
+    });
+    if (!put.ok) {
+      throw new CloudSeeError(`Upload to storage failed (HTTP ${put.status}).`, { status: put.status, code: "upload_failed" });
+    }
+
+    let complete: unknown;
+    try {
+      complete = await client.post("/storage/upload/complete", {
+        bucketName,
+        dirPath,
+        objects: [{ fileName, key: objectKey, contentType, size: bytes.byteLength }],
+      });
+    } catch (err) {
+      const reason = err instanceof Error ? err.message : String(err);
+      throw new CloudSeeError(
+        `The bytes are in storage but registering the file failed: ${reason}. The object may exist without an index entry — retry the upload, or remove it via the CloudSee app.`,
+        { code: "finalize_failed" },
+      );
+    }
+
+    const note = renamed ? ` (renamed from "${a.fileName}" — that name was taken)` : "";
+    return textResult(
+      `Uploaded "${fileName}" (${bytes.byteLength} bytes, ${contentType}) to "${a.destinationFolder || "/"}"${note}.\n\n${summarize(complete)}`,
+    );
   },
 };
 
@@ -557,8 +905,8 @@ const restoreArchivedFile: ToolDef = {
   },
 };
 
-export const writeTools: ToolDef[] = [
-  uploadFile,
+/** Everything except the transport-specific `upload_file` variant. */
+const commonWriteTools: ToolDef[] = [
   createFolder,
   renameFile,
   moveFile,
@@ -567,3 +915,11 @@ export const writeTools: ToolDef[] = [
   updateMetadata,
   restoreArchivedFile,
 ];
+
+/** stdio: `upload_file` reads a path, and a large one runs in the background — hence
+ *  `upload_status`, which has nothing to report on any other transport. */
+export const writeTools: ToolDef[] = [uploadFileLocal, uploadStatus, ...commonWriteTools];
+
+/** hosted: same tool name, but the bytes come in the call — the server has no access to
+ *  the caller's disk, and a hosted client cannot reach S3 to do a pre-signed PUT itself. */
+export const writeToolsHosted: ToolDef[] = [uploadFileInline, ...commonWriteTools];

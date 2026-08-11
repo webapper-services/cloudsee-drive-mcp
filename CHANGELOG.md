@@ -19,8 +19,53 @@ predate automated releasing and are consolidated by hand.
 
 ## [Unreleased]
 
+### Added
+
+- **Packaged as a Claude Desktop extension (MCP Bundle).** `npm run build:mcpb` produces a
+  `.mcpb` a user installs with one click and configures through a form — no editing
+  `claude_desktop_config.json`, no `npx`, no paths. This is the distribution route for anyone
+  who needs to upload large local files: the extension runs on the user's own machine, so
+  `upload_file` takes a path and streams in parts with no conversation-imposed ceiling.
+  - `manifest.json` declares the tools, the `user_config` fields (API key id, secret — marked
+    sensitive —, base URL, default drive, log level) and the privacy-policy URL.
+  - The bundle inlines `@modelcontextprotocol/sdk` and `zod` into a single ~770 KB file, so no
+    `node_modules` ships and nothing can fail to resolve on install.
+  - `test/manifest.test.ts` asserts the manifest cannot drift from the code: same tool list,
+    same version as the package *and* as the runtime handshake, every env var wired from a
+    declared `user_config` key, and the real config loader accepting the exact env the manifest
+    produces — including when every optional field is left blank.
+- **A "Privacy Policy" section in the README**, required for a directory listing.
+- **Multipart upload for files larger than 8 MiB.** `upload_file` now uploads large files in parts
+  automatically (8 MiB per part), capturing each part's ETag and finalizing via
+  `/storage/upload/complete-parts`. A failed part aborts the multipart upload so no orphaned parts
+  remain. Files up to 8 MiB still use the single-shot path.
+
 ### Changed
 
+- **`upload_file` now has two shapes, selected by transport — same tool name either way.**
+  Over **stdio** it keeps `localPath`: the server runs on the caller's own machine, so reading
+  the file there is correct and there is no size limit. On a **hosted** connector a path is
+  meaningless (it would resolve against the server's filesystem, which is also an
+  arbitrary-file-read vector) and a remote MCP client cannot perform the pre-signed PUT itself
+  either — verified against production, which refused it with
+  `Host not in allowlist: <bucket>.s3.amazonaws.com`. The hosted shape therefore takes
+  `content` + `encoding` (`"utf8"` default, `"base64"` for binary) and this server performs the
+  PUT. It is capped at **256 KB**, set by how much a caller can realistically put in one
+  request rather than by the transport.
+  - `createServer(config, tools)` now takes the tool set; `allTools` (stdio) and `hostedTools`
+    hold the same 17 names and differ only in this variant.
+  - `contentType` is no longer an input on either shape — see the Fixed entry below.
+- **Uploads no longer overwrite.** Both shapes probe the target key first and, if it is taken,
+  store the file with a timestamp appended (`report (30-07-2026 14:05).md`), reporting the name
+  used — the same rule the web uploader applies.
+- **`destinationFolder` is optional**; omitting it means the drive root.
+- **Multipart parts upload four at a time** instead of strictly one after another, and the part
+  size is now **16 MiB** (was 8 MiB), matching the web uploader. Concurrency does not create
+  bandwidth — on a saturated link it changes nothing — but it stops a high-latency link idling
+  between round trips. Parts are still finalized in ascending order regardless of the order they
+  complete in.
+- Note the tracking is in memory: quitting the MCP client cancels an upload in progress, and
+  ids do not survive a restart.
 - **BREAKING: `rename_file`, `move_file` and `delete_files` are re-grounded on the queue-based
   contract.** The direct `/storage/object/rename`, `/storage/object/move` and
   `/storage/objects/delete` endpoints no longer exist; the tools now post to the queue-backed
@@ -62,15 +107,54 @@ predate automated releasing and are consolidated by hand.
   now names Claude Desktop's own tool-permission prompt as the real gate and explains Deny,
   per-call independence, and the "Allow for this task" default.
 
-### Added
-
-- **Multipart upload for files larger than 8 MiB.** `upload_file` now uploads large files in parts
-  automatically (8 MiB per part), capturing each part's ETag and finalizing via
-  `/storage/upload/complete-parts`. A failed part aborts the multipart upload so no orphaned parts
-  remain. Files up to 8 MiB still use the single-shot path.
-
 ### Fixed
 
+- **A multipart upload left the file invisible in the drive.** `/storage/upload/complete-parts`
+  only assembles the S3 object; it does not create an index entry. So a large upload reported
+  success, the bytes were verifiably in the bucket with a correct multipart ETag — and the drive
+  showed a folder size with no file in it, while `get_file_metadata` returned null. Registration
+  is a second call, `/storage/upload/complete`, which the single-file path already made and the
+  web uploader makes for both paths (`StorageContext.completeUploadProcess`). Multipart now makes
+  it too, and reports a clear error naming the consequence if that call fails.
+- **`summarize()` crashed on a response with no body.** `JSON.stringify(undefined)` returns
+  `undefined` rather than throwing, so the existing `try/catch` never fired and the next string
+  operation threw — surfacing as an upload marked "failed" with an unhelpful reason.
+- **Large uploads no longer fail as a timeout.** An MCP client abandons a tool call after 60
+  seconds (`DEFAULT_REQUEST_TIMEOUT_MSEC` in the SDK), and nothing the server sends reliably
+  extends that — progress notifications only reset the clock when the client set
+  `resetTimeoutOnProgress`, which is false by default. Any file that takes longer than a minute
+  to transfer was therefore reported as `-32001 Request timed out`, in some cases while the
+  upload was still running and about to succeed. Reported from the field: 6.2 MiB worked,
+  51 MiB and 422 MiB did not.
+  - A file over 8 MiB now uploads **in the background**. `upload_file` returns an id
+    immediately; the new **`upload_status`** tool reports parts done, bytes, percentage, rate
+    and ETA, and whether the job is running, completed or failed. The file is in the drive only
+    once the job says `completed`.
+  - This mirrors what the product already does for `rename_file`, `move_file` and
+    `delete_files`, which return a queue id and finish in the background.
+  - `upload_status` is stdio-only — the hosted transport uploads inline and synchronously, and a
+    stateless Lambda could not report on a background job anyway.
+- **Uploads failed with `403 SignatureDoesNotMatch` for most file types.** Storage ignores the
+  caller's `contentType`, re-derives one from the file name and signs the pre-signed URL with
+  *that*, while returning only the URL — so a client sending `application/octet-stream` could
+  never match for any extension in the service's table (`.md`, `.txt`, `.json`, `.pdf`, `.mov`,
+  …). The type is now derived from the file name exactly as the service does
+  (`src/tools/mime.ts`), used for both the presign and the PUT, and pinned against a committed
+  snapshot of the service's table by the contract-drift test.
+- **"Local file not found" now points at near matches.** A name differing only by an invisible
+  character — a macOS screen recording's `U+202F` before `AM`/`PM`, for instance — produced a
+  message that looked identical to the path asked for. The error now lists the close name from
+  the same folder and names the character.
+- **An oversized file is rejected before any network call**, instead of after the collision
+  probe.
+- **The reported version is the real one.** `VERSION` was a hand-maintained copy that had
+  drifted: the published 0.1.5 tarball announces itself as `0.1.0` in the MCP handshake, the
+  User-Agent and `/healthz`. It is now read from `package.json` and inlined at build time, with
+  a test binding manifest, package and runtime to the same number.
+- **A blank optional setting no longer stops the server from starting.** MCPB (and a Claude
+  Desktop `env` block) substitute an unset optional value as an empty string rather than
+  omitting the key, which `.url()` and `.min(1)` rejected — so leaving "default drive" empty
+  would have failed the very first launch. Blank is now read as absent.
 - **`create_folder` matches the real contract.** The endpoint consumes `object` as a
   folder descriptor, so the tool now sends `object: { name }` instead of a bare name string
   (the old shape crashed the handler). The tool's input schema is unchanged.
@@ -91,10 +175,6 @@ predate automated releasing and are consolidated by hand.
   a full-state SET: metadata is now the structured `{category, description, project}` object and
   `tags` the complete replacement tag set, with the overwrite semantics called out in the tool
   description and confirmation preview. Verified end-to-end against UAT.
-- **The advertised server version no longer drifts from `package.json`.** `VERSION` was
-  hardcoded to `0.1.0` in `src/version.ts` and never updated by anything; it is now read from
-  `package.json` at process start, so the MCP handshake, the health check, and the
-  `User-Agent` string always report the version that was actually published.
 
 ## [0.1.5] - 2026-06-23
 
