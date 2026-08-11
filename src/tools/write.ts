@@ -479,11 +479,38 @@ const uploadStatus: ToolDef = {
 // than let a caller burn its whole context and fail anyway.
 const MAX_INLINE_BYTES = 256 * 1024;
 
+function assertInlineSize(byteLength: number): void {
+  if (byteLength <= MAX_INLINE_BYTES) return;
+  throw new CloudSeeError(
+    `That file is ${byteLength} bytes; this tool accepts up to ${MAX_INLINE_BYTES} because the whole payload travels in the request. Upload larger files through the CloudSee web app.`,
+    { code: "content_too_large" },
+  );
+}
+
 /** Buffer.from silently DROPS invalid base64 characters, which would store a quietly
- *  corrupted file, so a base64 payload is verified by re-encoding it. */
+ *  corrupted file, so a base64 payload is verified by re-encoding it.
+ *
+ *  The size is checked from the string itself, before any decode buffer exists. Decoding
+ *  first and measuring afterwards would let a caller make the server allocate megabytes it
+ *  is about to reject anyway — and on the base64 path the verification re-encode allocates
+ *  the payload a second time. A `.max()` on the Zod field would be the obvious guard but is
+ *  the wrong one: the byte ceiling is not a character ceiling, and any bound tight enough to
+ *  be meaningful would reject MIME-wrapped base64, whose newlines this function accepts by
+ *  design. */
 function decodeInlineContent(content: string, encoding: "utf8" | "base64"): Buffer {
-  if (encoding === "utf8") return Buffer.from(content, "utf8");
+  if (encoding === "utf8") {
+    // Counts the utf8 bytes without materialising them.
+    assertInlineSize(Buffer.byteLength(content, "utf8"));
+    return Buffer.from(content, "utf8");
+  }
+
   const cleaned = content.replace(/\s+/g, "");
+  // Every 4 base64 characters carry 3 bytes; the padding is the only thing that shortens the
+  // last group, so this is the exact decoded length for well-formed input and an upper bound
+  // for anything else — which the re-encode check below rejects regardless.
+  const padding = cleaned.endsWith("==") ? 2 : cleaned.endsWith("=") ? 1 : 0;
+  assertInlineSize(Math.max(0, Math.floor(cleaned.length / 4) * 3 - padding));
+
   const decoded = Buffer.from(cleaned, "base64");
   const strip = (s: string): string => s.replace(/=+$/, "");
   if (strip(decoded.toString("base64")) !== strip(cleaned)) {
@@ -524,13 +551,8 @@ const uploadFileInline: ToolDef = {
     const bucketName = resolveBucket(a.bucketName, defaultBucket);
     const dirPath = normalizeFolder(a.destinationFolder ?? "");
 
+    // Refuses an oversized payload before decoding it — see decodeInlineContent.
     const bytes = decodeInlineContent(a.content, a.encoding ?? "utf8");
-    if (bytes.byteLength > MAX_INLINE_BYTES) {
-      throw new CloudSeeError(
-        `That file is ${bytes.byteLength} bytes; this tool accepts up to ${MAX_INLINE_BYTES} because the whole payload travels in the request. Upload larger files through the CloudSee web app.`,
-        { code: "content_too_large" },
-      );
-    }
 
     const { fileName, contentType, key, renamed } = await resolveTarget(client, bucketName, dirPath, a.fileName);
 

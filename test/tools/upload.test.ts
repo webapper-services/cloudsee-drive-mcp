@@ -499,6 +499,42 @@ describe("upload_file (hosted, inline content)", () => {
     expect(post).not.toHaveBeenCalled();
   });
 
+  // The ceiling is enforced from the string's own length, so an oversized base64 payload is
+  // refused without ever allocating the decode buffer it describes.
+  it("refuses oversized base64 without decoding it", async () => {
+    const post = vi.fn();
+    const decode = vi.spyOn(Buffer, "from");
+
+    // 4 base64 characters per 3 bytes — one group past the ceiling.
+    const oversized = "A".repeat((256 * 1024 / 3 + 1) * 4);
+    await expect(
+      uploadInline.handler({ bucketName: "b", fileName: "big.bin", content: oversized, encoding: "base64" }, ctx(post)),
+    ).rejects.toMatchObject({ code: "content_too_large" });
+
+    expect(decode).not.toHaveBeenCalledWith(expect.anything(), "base64");
+    expect(post).not.toHaveBeenCalled();
+    decode.mockRestore();
+  });
+
+  // MIME-wrapped base64 arrives with a newline every 76 characters. Those newlines push the
+  // string well past any character-count bound derived from the byte ceiling, which is why the
+  // guard measures decoded bytes rather than capping the field's length.
+  it("accepts base64 wrapped in newlines", async () => {
+    const raw = Buffer.alloc(4096, 0xab);
+    const wrapped = raw.toString("base64").replace(/(.{76})/g, "$1\n");
+    const post = postWithFreeName("https://s3.example/put", { ok: true });
+    const fetchMock = vi.fn().mockResolvedValue(new Response("", { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await uploadInline.handler(
+      { bucketName: "b", fileName: "blob.bin", content: wrapped, encoding: "base64" },
+      ctx(post),
+    );
+
+    const body = (fetchMock.mock.calls[0] as [string, RequestInit])[1].body as Uint8Array;
+    expect(Buffer.from(body).equals(raw)).toBe(true);
+  });
+
   it("renames instead of overwriting, and says so", async () => {
     const post = vi
       .fn()
