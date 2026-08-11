@@ -1,3 +1,21 @@
+# [2.0.0](https://github.com/webapper-services/cloudsee-drive-mcp/compare/v1.0.0...v2.0.0) (2026-08-11)
+
+
+* feat!: Claude Desktop extension and background large-file uploads ([6c54aaa](https://github.com/webapper-services/cloudsee-drive-mcp/commit/6c54aaaefa1ea38a4d6e8be47f7f48e4e074f87d))
+
+
+### BREAKING CHANGES
+
+* upload_file no longer accepts a contentType argument — the type is
+derived from the file name, because storage signs the upload URL with its own
+derivation and any other value produces a signature mismatch.
+* over stdio, upload_file no longer completes a file larger than
+8 MiB before returning. It returns an upload id; poll upload_status until it
+reports completed.
+* on the hosted transport, upload_file takes content + encoding
+instead of localPath, capped at 256 KB. A hosted server has no access to the
+caller's disk.
+
 # 1.0.0 (2026-08-05)
 
 
