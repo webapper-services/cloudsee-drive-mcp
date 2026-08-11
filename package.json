@@ -1,6 +1,6 @@
 {
   "name": "@webapper/cloudsee-drive-mcp",
-  "version": "2.0.0",
+  "version": "2.0.1",
   "mcpName": "io.github.webapper-services/cloudsee-drive",
   "description": "Open-source MCP server for CloudSee Drive — connect your CloudSee account (Amazon S3) to Claude Desktop and any MCP client with an API key.",
   "type": "module",

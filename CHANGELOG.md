@@ -1,3 +1,10 @@
+## [2.0.1](https://github.com/webapper-services/cloudsee-drive-mcp/compare/v2.0.0...v2.0.1) (2026-08-11)
+
+
+### Bug Fixes
+
+* **upload:** check the inline size before allocating the decode buffer ([dcfb71d](https://github.com/webapper-services/cloudsee-drive-mcp/commit/dcfb71d08fc22e2b305e6dbcd573e393cb6d98a6))
+
 # [2.0.0](https://github.com/webapper-services/cloudsee-drive-mcp/compare/v1.0.0...v2.0.0) (2026-08-11)
 
 
