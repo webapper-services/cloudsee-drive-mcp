@@ -216,7 +216,9 @@ In short — the server is a **conduit**, not a destination:
 - Your API key id + secret are read from the environment and **held only in this local
   process**. The server **never logs the secret**, never returns it in tool output, and
   never writes it to a file. All diagnostics go to **stderr** (stdout is the MCP transport).
-- File downloads/shares return **short-lived pre-signed URLs**, never AWS credentials.
+- File downloads/shares return **short-lived pre-signed URLs**, never long-lived account
+  credentials. (A pre-signed URL embeds the temporary, scoped signing token that is inherent
+  to S3 SigV4 presigning — it expires with the link.)
 - **Rotating an API key issues a new key id and secret together and revokes the old id
   immediately** — update both `CLOUDSEE_API_KEY_ID` and `CLOUDSEE_API_KEY_SECRET` after
   rotating; see [GUIDE.md §8 Troubleshooting](docs/GUIDE.md#8-troubleshooting).

@@ -864,7 +864,7 @@ const updateMetadata: ToolDef = {
   name: "update_metadata",
   title: "Update file metadata",
   description:
-    "Update a file's metadata (category / description / project) and tags in a drive, addressed by its storage id (the StorageId field from search_files / browse_folder / recent_files — not from list_files). Destructive: this SETS the full state — omitted metadata fields and omitted tags are cleared. Requires the drive (bucketName) and confirm=true." +
+    "Update a file's metadata (category / description / project) and tags in a drive, addressed by its storage id (the StorageId field from search_files / browse_folder / recent_files — not from list_files). Destructive: this SETS the full state — omitted metadata fields and omitted tags are cleared. Requires the drive (bucketName) and confirm=true. Note: the update rewrites the object in place (S3 copy) — its ETag changes (and may change format) and LastModified is set to the update time; ETag-keyed caches and sync tools will see the object as new. Objects larger than 5 GiB are updated via multipart copy." +
     RBAC_NOTE,
   endpoint: { method: "POST", path: "/storage/object/metadata", scopes: ["drive:write"] },
   inputSchema: updateMetaSchema.shape,

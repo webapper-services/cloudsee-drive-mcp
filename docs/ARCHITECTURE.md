@@ -304,7 +304,9 @@ mechanically:
   log) and the logger **redacts** the registered secret as a backstop
   ([`src/client/CloudSeeClient.ts:196-198`](../src/client/CloudSeeClient.ts)).
 - **The secret is never in a `CallToolResult`.** Downloads/shares put a **pre-signed URL** (a
-  time-limited capability link) in the text — never AWS credentials.
+  time-limited capability link) in the text — never long-lived account credentials. The URL
+  embeds the temporary, scoped SigV4 signing token inherent to presigning; it expires with
+  the link.
 
 ---
 
