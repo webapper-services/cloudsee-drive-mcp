@@ -1,3 +1,10 @@
+## [2.0.2](https://github.com/webapper-services/cloudsee-drive-mcp/compare/v2.0.1...v2.0.2) (2026-08-27)
+
+
+### Bug Fixes
+
+* **update_metadata:** state the 8 GiB ceiling in the tool description ([57b32b7](https://github.com/webapper-services/cloudsee-drive-mcp/commit/57b32b7a67492fd53d0cc79415051e66cb4646a5))
+
 ## [2.0.1](https://github.com/webapper-services/cloudsee-drive-mcp/compare/v2.0.0...v2.0.1) (2026-08-11)
 
 
