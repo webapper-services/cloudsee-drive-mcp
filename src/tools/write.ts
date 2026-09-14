@@ -6,7 +6,7 @@ import { confirmShape, confirmationPreview } from "../confirm";
 import { summarize } from "./format";
 import { mimeForFileName } from "./mime";
 import { createJob, finishJob, getJob, listJobs, recordPart, type UploadJob } from "../uploads";
-import { bucketField, resolveBucket, textResult, type ToolContext, type ToolDef } from "./types";
+import { bucketField, normalizeFolder, resolveBucket, textResult, type ToolContext, type ToolDef } from "./types";
 
 // Appended to every write/delete tool: the public API's RBAC is live,
 // so a denial is a scope problem on the caller's key, never a rollout gate.
@@ -71,11 +71,6 @@ function pickKey(data: unknown): string | undefined {
 // ============================================================================
 
 type UploadClient = ToolContext["client"];
-
-/** The server concatenates dirPath+fileName verbatim, so a folder needs its trailing slash. */
-function normalizeFolder(folder: string): string {
-  return folder && !folder.endsWith("/") ? `${folder}/` : folder;
-}
 
 /** "report.md" → "report (30-07-2026 14:05).md" — the web uploader's collision rule
  *  (StorageContext.uploadSingle), so an upload never silently overwrites. */
@@ -864,7 +859,7 @@ const updateMetadata: ToolDef = {
   name: "update_metadata",
   title: "Update file metadata",
   description:
-    "Update a file's metadata (category / description / project) and tags in a drive, addressed by its storage id (the StorageId field from search_files / browse_folder / recent_files — not from list_files). Destructive: this SETS the full state — omitted metadata fields and omitted tags are cleared. Requires the drive (bucketName) and confirm=true. Note: the update rewrites the object in place (S3 copy) — its ETag changes (and may change format) and LastModified is set to the update time; ETag-keyed caches and sync tools will see the object as new. Objects larger than 5 GiB are updated via multipart copy." +
+    "Update a file's metadata (category / description / project) and tags in a drive, addressed by its storage id (the StorageId field from search_files / browse_folder / recent_files — not from list_files). Destructive: this SETS the full state — omitted metadata fields and omitted tags are cleared. Requires the drive (bucketName) and confirm=true. Note: the update rewrites the object in place (S3 copy) — its ETag changes (and may change format) and LastModified is set to the update time; ETag-keyed caches and sync tools will see the object as new. Objects larger than 5 GiB are updated via multipart copy; objects larger than 8 GiB are rejected, because the rewrite cannot finish inside the API request timeout." +
     RBAC_NOTE,
   endpoint: { method: "POST", path: "/storage/object/metadata", scopes: ["drive:write"] },
   inputSchema: updateMetaSchema.shape,

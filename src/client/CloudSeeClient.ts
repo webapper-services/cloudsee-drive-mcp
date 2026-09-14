@@ -95,7 +95,7 @@ export class CloudSeeClient {
     if (cursor) requestBody[dialect] = decodeCursor(cursor, dialect);
     const { data, envelope } = await this.request<T>(path, requestBody, options);
     const token = extractNextToken(envelope, dialect) ?? extractNextToken(data, dialect);
-    return { data, nextCursor: encodeCursor(dialect, token) };
+    return { data, nextCursor: encodeCursor(dialect, token?.value, token?.json) };
   }
 
   /** Run the request with retry/backoff, returning the unwrapped `data` together

@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { CloudSeeClient } from "../../src/client/CloudSeeClient";
 import { AuthError, CloudSeeError } from "../../src/errors";
 import { configureLogger } from "../../src/logger";
+import { allTools } from "../../src/tools/index";
 import type { Config } from "../../src/config";
 
 const config: Config = {
@@ -127,6 +128,56 @@ describe("CloudSeeClient", () => {
     expect(data).toEqual([{ id: 1 }]);
     expect(nextCursor).toBeTruthy();
     expect(nextCursor).not.toContain("StorageId"); // opaque cursor, not the raw token
+  });
+
+  // CSD-662 F3a/F3b: the round trip, end to end over the wire. Page 1 hands back an array
+  // token; the second request must carry it back as an array or OpenSearch 400s on
+  // `search_after` and the caller gets the generic APP_ERROR sentence.
+  it("puts a structured continuation token back on the wire in its original array shape", async () => {
+    const searchAfter = [1757768351000, "Birds/", "abc"];
+    fetchMock
+      .mockResolvedValueOnce(
+        jsonResponse({ success: true, data: { items: [{ Name: "Abubilla.jpg" }], totalItems: 21, nextPage: searchAfter } }),
+      )
+      .mockResolvedValueOnce(
+        jsonResponse({ success: true, data: { items: [{ Name: "Bluejay.webp" }], totalItems: 21, nextPage: null } }),
+      );
+    const client = new CloudSeeClient(config);
+
+    const { nextCursor } = await client.postPaged("/storage/list", { bucketName: "cloudsee-demo", pageSize: 2 }, "nextPage");
+    expect(nextCursor).toBeTruthy();
+    await client.postPaged("/storage/list", { bucketName: "cloudsee-demo", pageSize: 2 }, "nextPage", nextCursor);
+
+    const [, init] = fetchMock.mock.calls[1] as [string, RequestInit];
+    const body = JSON.parse(init.body as string) as Record<string, unknown>;
+    expect(Array.isArray(body.nextPage)).toBe(true);
+    expect(body.nextPage).toEqual(searchAfter);
+  });
+
+  // CSD-662 F3c: /storage/recent WRITES its token as `nextToken` but READS it as `nextPage`
+  // (app.js:406, and the published registry row). Sending it back under `nextToken` left
+  // ExclusiveStartKey undefined — page 1 forever, with the identical cursor.
+  it("sends recent_files' continuation token under `nextPage`, the field the endpoint reads", async () => {
+    const lastEvaluatedKey = { StorageId: "937896d1", Email: "demoadmin@cloudsee.cloud" };
+    fetchMock
+      .mockResolvedValueOnce(
+        jsonResponse({ success: true, data: [{ Name: "a.txt" }, { Name: "b.txt" }], nextToken: lastEvaluatedKey }),
+      )
+      .mockResolvedValueOnce(jsonResponse({ success: true, data: [{ Name: "c.txt" }] }));
+    const client = new CloudSeeClient(config);
+    const recentFiles = allTools.find((tool) => tool.name === "recent_files");
+    if (!recentFiles) throw new Error("recent_files tool is not registered");
+
+    const firstPage = await recentFiles.handler({ limit: 2 }, { client });
+    const cursor = /cursor="([^"]+)"/.exec(firstPage.content[0]?.text ?? "")?.[1];
+    expect(cursor).toBeTruthy();
+    await recentFiles.handler({ limit: 2, cursor }, { client });
+
+    const [, init] = fetchMock.mock.calls[1] as [string, RequestInit];
+    const body = JSON.parse(init.body as string) as Record<string, unknown>;
+    expect(body).toHaveProperty("nextPage");
+    expect(body).not.toHaveProperty("nextToken");
+    expect(body.nextPage).toEqual(lastEvaluatedKey);
   });
 
   it("logs the request and response at debug level for API auditing (secret never shown)", async () => {

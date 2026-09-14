@@ -33,6 +33,13 @@ export function resolveBucket(bucket: string | undefined, defaultBucket: string 
   return resolved;
 }
 
+/** The server concatenates dirPath+fileName verbatim, and the index stores a folder's
+ *  `Parent` with its trailing slash, so a folder needs that slash on both the write and
+ *  the read path. `""` is left alone — the server maps it to the drive root itself. */
+export function normalizeFolder(folder: string): string {
+  return folder && !folder.endsWith("/") ? `${folder}/` : folder;
+}
+
 export interface ToolResult {
   // Index signature mirrors the MCP SDK's CallToolResult (which permits extra
   // fields like _meta); lets ToolResult satisfy the registerTool callback type.

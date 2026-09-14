@@ -262,8 +262,9 @@ A worked call:
 {"jsonrpc":"2.0","id":7,"result":{"content":[{"type":"text","text":"[ {\"name\":\"MDU005.pdf\", … } ]\n\n↪ More results available. Call this tool again with cursor=\"…\"."}]}}
 ```
 
-The model receives **text**, not raw bytes or URLs it can't see — downloads/shares return a
-short-lived pre-signed URL *inside* that text (§ secret discipline), never the file body.
+The model receives **text**, not raw bytes or URLs it can't see — a download returns a
+short-lived pre-signed URL, and a share returns a CloudSee share page URL, *inside* that text
+(§ secret discipline), never the file body.
 
 ---
 
@@ -303,10 +304,12 @@ mechanically:
 - **The secret is never logged** (auth headers are excluded from the debug request/response audit
   log) and the logger **redacts** the registered secret as a backstop
   ([`src/client/CloudSeeClient.ts:196-198`](../src/client/CloudSeeClient.ts)).
-- **The secret is never in a `CallToolResult`.** Downloads/shares put a **pre-signed URL** (a
+- **The secret is never in a `CallToolResult`.** A download puts a **pre-signed URL** (a
   time-limited capability link) in the text — never long-lived account credentials. The URL
   embeds the temporary, scoped SigV4 signing token inherent to presigning; it expires with
-  the link.
+  the link. A share puts the **CloudSee share page URL** in the text together with its
+  `expiredTimeUTC` and `shareId`; `share_link` renders those three fields explicitly, so the
+  raw share token the API returns once never reaches the result.
 
 ---
 
@@ -454,7 +457,7 @@ and returns a `RequestId`; it completes in the background, typically within 1–
 | `get_file_metadata` | `/storage/object/detail` | `drive:read` | live |
 | `get_file_tags` | `/storage/object/tagging` | `drive:read` | live |
 | `download_file` | `/storage/object/download-url` | `drive:read`+`drive:download` | live (pre-signed URL) |
-| `share_link` | `/storage/object/download-url` (`shareableLink`) | `drive:read`+`drive:download` | live |
+| `share_link` | `/shares/link/create` (`targetType: "object"`) | `drive:write` | live — token-backed share page, revocable from the dashboard |
 | `upload_file` | `/storage/object/detail` (collision probe) → `/storage/upload/url` → `PUT` → `/storage/upload/complete` (multipart: `/storage/upload/multipart-urls` → `PUT`× → `/storage/upload/complete-parts`) | `drive:write` | live. **stdio** takes `localPath`; **hosted** takes `content` (≤ 256 KB) — see [`src/tools/index.ts`](../src/tools/index.ts) |
 | `create_folder` | `/storage/folder/create` | `drive:write` | live |
 | `duplicate_file` | `/storage/object/duplicate` | `drive:write` | live |

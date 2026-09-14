@@ -155,7 +155,7 @@ confirmation (see below). Most tools need a **drive** — pass `bucketName` (or 
 | `get_file_metadata` | One file's metadata | read | "Get details for `reports/q3.pdf`." |
 | `get_file_tags` | A file's S3 tags | read | "What tags are on `reports/q3.pdf`?" |
 | `download_file` | Temporary pre-signed download URL | download | "Give me a download link for `q3.pdf`." |
-| `share_link` | Shareable, time-limited link | download | "Create a share link for `q3.pdf`." |
+| `share_link` | Revocable CloudSee share page link with a stated expiry | write | "Create a share link for `q3.pdf`." |
 | `upload_file` | Upload a file (path over stdio, contents when hosted) | write | "Upload `./q3.pdf` to `reports/`." |
 | `upload_status` † | Progress of a large upload running in the background | write | "How's that upload going?" |
 | `create_folder` | Create a folder | write | "Create a `2026/` folder." |
@@ -326,7 +326,8 @@ writes with an admin key carrying `drive:write`/`drive:delete`:
 | `recent_files` | ✅ Live data | Per-user index; the one read tool that needs **no** drive. |
 | `list_files` (with a drive) | ✅ Live data | Recursive listing straight from storage — the reliable way to see a drive's files. |
 | `get_file_metadata`, `get_file_tags` (with a drive) | ✅ Live data | Real per-object metadata / S3 tags. |
-| `download_file`, `share_link` (with a drive) | ✅ Live data | Real short-lived pre-signed URLs (never AWS keys). |
+| `download_file` (with a drive) | ✅ Live data | Real short-lived pre-signed URLs (never AWS keys). |
+| `share_link` (with a drive) | ✅ Live | A CloudSee-hosted share page, not a raw S3 URL — returns the link, its `expiredTimeUTC` and a `shareId`, and stays revocable from the dashboard. |
 | `browse_folder`, `search_files` (with a drive) | ✅ Call succeeds | Use the **search index**, so they can return empty for un-indexed content — prefer `list_files`. Browsing a drive **root** (no `path`) can still 500 (a backend quirk on empty prefix); give a sub-folder path. |
 | `list_buckets` | ✅ Live data | Returns the drives the API key can access — use it to discover drive names. |
 | Write/delete mutations | ✅ Live | Verified end-to-end with a key carrying `drive:write`/`drive:delete`. Keys without the scope get a clean `insufficient_scope` denial. rename/move/copy/delete are **queued** (RequestId; completes within ~1–2 minutes). |

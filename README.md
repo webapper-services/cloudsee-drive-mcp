@@ -121,7 +121,7 @@ Most tools operate on one **drive** (an S3 bucket): pass `bucketName`, or set
 | `get_file_metadata` | Get a file's metadata | read |
 | `get_file_tags` | Get a file's S3 tags | read |
 | `download_file` | Get a temporary pre-signed download URL | download |
-| `share_link` | Create a shareable, time-limited link | download |
+| `share_link` | Create a revocable CloudSee share page link with a stated expiry | write |
 | `upload_file` | Upload a file — see [Uploading](#uploading) | write |
 | `upload_status` | Progress of a large upload running in the background (stdio only) | write |
 | `create_folder` | Create a folder | write |
@@ -208,7 +208,8 @@ In short — the server is a **conduit**, not a destination:
 - **Who else sees it.** Your AI client, which issues the tool calls, and the CloudSee Drive API /
   Amazon S3, which performs them. No analytics, no profiling, no model training, no resale.
 - **Retention.** None by this server. Files and account data live in CloudSee Drive under its own
-  policy; downloads and shares are short-lived pre-signed URLs.
+  policy; downloads are short-lived pre-signed URLs, and a share is a CloudSee-hosted page whose
+  share record carries its own expiry.
 - **Contact.** privacy@webapper.net · security reports per [SECURITY.md](SECURITY.md).
 
 ## Security
@@ -216,9 +217,12 @@ In short — the server is a **conduit**, not a destination:
 - Your API key id + secret are read from the environment and **held only in this local
   process**. The server **never logs the secret**, never returns it in tool output, and
   never writes it to a file. All diagnostics go to **stderr** (stdout is the MCP transport).
-- File downloads/shares return **short-lived pre-signed URLs**, never long-lived account
+- File downloads return **short-lived pre-signed URLs**, never long-lived account
   credentials. (A pre-signed URL embeds the temporary, scoped signing token that is inherent
   to S3 SigV4 presigning — it expires with the link.)
+- `share_link` returns a **CloudSee-hosted share page**, not a storage URL: the API records the
+  share with an explicit expiry (`expiredTimeUTC`) and a `shareId`, so it can be revoked before
+  it expires. The raw share token the API mints is never rendered into tool output.
 - **Rotating an API key issues a new key id and secret together and revokes the old id
   immediately** — update both `CLOUDSEE_API_KEY_ID` and `CLOUDSEE_API_KEY_SECRET` after
   rotating; see [GUIDE.md §8 Troubleshooting](docs/GUIDE.md#8-troubleshooting).

@@ -85,7 +85,7 @@
     { "name": "get_file_metadata", "description": "Get size, type, timestamps, storage class and other attributes for one file" },
     { "name": "get_file_tags", "description": "Get the S3 object tags attached to a file" },
     { "name": "download_file", "description": "Get a short-lived pre-signed download URL for a file" },
-    { "name": "share_link", "description": "Create a shareable, time-limited link to a file" },
+    { "name": "share_link", "description": "Create a revocable CloudSee share link to a file, with a stated expiry" },
     { "name": "upload_file", "description": "Upload a file from this machine into a drive, in parts when it is large" },
     { "name": "upload_status", "description": "Check progress on a large upload that is still running in the background" },
     { "name": "create_folder", "description": "Create a new folder in a drive" },
@@ -93,7 +93,7 @@
     { "name": "move_file", "description": "Move or copy a file or folder to another location (a move asks for confirmation)" },
     { "name": "duplicate_file", "description": "Create a copy of a file in the same location" },
     { "name": "delete_files", "description": "Permanently delete files or folders (asks for confirmation)" },
-    { "name": "update_metadata", "description": "Set a file's category, description, project and tags (asks for confirmation; rewrites the object in place, changing its ETag and LastModified)" },
+    { "name": "update_metadata", "description": "Set a file's category, description, project and tags (asks for confirmation; rewrites the object in place, changing its ETag and LastModified; not available for objects larger than 8 GiB)" },
     { "name": "restore_archived_file", "description": "Begin restoring an archived Glacier object so it can be downloaded (asks for confirmation)" }
   ]
 }

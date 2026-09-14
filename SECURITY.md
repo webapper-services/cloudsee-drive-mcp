@@ -16,8 +16,12 @@ business days and will coordinate a fix and disclosure timeline with you.
 - All diagnostic logging is written to **stderr**; stdout carries only the MCP protocol stream.
 - Keep your secret in your MCP client's `env` block or a gitignored `.env`. **Never** commit a
   real secret or paste one into an issue, PR, or log.
-- File access is granted via **short-lived pre-signed URLs**; the server never receives or
+- File downloads are granted via **short-lived pre-signed URLs**; the server never receives or
   exposes long-lived AWS credentials.
+- Share links are **token-backed CloudSee share pages**, not direct storage URLs: the API
+  persists a share record carrying an explicit expiry and a `shareId`, so a share can be revoked
+  before it expires. The raw share token is returned by the API once and is **never** rendered
+  into tool output.
 
 ## Scope
 

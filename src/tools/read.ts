@@ -1,6 +1,6 @@
 import { z } from "zod";
-import { summarize, withCursor } from "./format";
-import { bucketField, resolveBucket, textResult, type ToolDef } from "./types";
+import { summarize, summarizeListing, withCursor } from "./format";
+import { bucketField, normalizeFolder, resolveBucket, textResult, type ToolDef } from "./types";
 
 // ---- list_buckets → POST /storage/drives (storageDriveList, drive:read) ----
 const listBuckets: ToolDef = {
@@ -38,11 +38,11 @@ const browseFolder: ToolDef = {
     const bucketName = resolveBucket(a.bucketName, defaultBucket);
     const { data, nextCursor } = await client.postPaged(
       "/storage/list",
-      { bucketName, dirPath: a.path ?? "", sortOption: a.sortOption, pageSize: a.pageSize ?? 50 },
+      { bucketName, dirPath: normalizeFolder(a.path ?? ""), sortOption: a.sortOption, pageSize: a.pageSize ?? 50 },
       "nextPage",
       a.cursor,
     );
-    return textResult(withCursor(summarize(data), nextCursor));
+    return textResult(withCursor(summarizeListing(data), nextCursor));
   },
 };
 
@@ -67,11 +67,11 @@ const searchFiles: ToolDef = {
     const bucketName = resolveBucket(a.bucketName, defaultBucket);
     const { data, nextCursor } = await client.postPaged(
       "/storage/list",
-      { bucketName, dirPath: a.path ?? "", searchingKeyword: a.query, pageSize: a.pageSize ?? 50 },
+      { bucketName, dirPath: normalizeFolder(a.path ?? ""), searchingKeyword: a.query, pageSize: a.pageSize ?? 50 },
       "nextPage",
       a.cursor,
     );
-    return textResult(withCursor(summarize(data), nextCursor));
+    return textResult(withCursor(summarizeListing(data), nextCursor));
   },
 };
 
@@ -98,7 +98,7 @@ const listFiles: ToolDef = {
       "marker",
       a.cursor,
     );
-    return textResult(withCursor(summarize(data), nextCursor));
+    return textResult(withCursor(summarizeListing(data), nextCursor));
   },
 };
 
@@ -117,12 +117,14 @@ const recentFiles: ToolDef = {
   handler: async (args, { client }) => {
     const a = recentSchema.parse(args);
     const limit = a.limit ?? 50;
-    // /storage/recent paginates with `nextToken` (a composite key returned at the
-    // envelope level), not `nextPage`. It echoes that token even when the list is
-    // exhausted, so only advertise a next page when this page came back full.
-    const { data, nextCursor } = await client.postPaged("/storage/recent", { limit }, "nextToken", a.cursor);
+    // /storage/recent returns its continuation token as `nextToken` at the envelope
+    // level but READS it back as `nextPage` (app.js, and the published registry row),
+    // so the request dialect is `nextPage`; extractNextToken still finds `nextToken`
+    // on the response. It echoes that token even when the list is exhausted, so only
+    // advertise a next page when this page came back full.
+    const { data, nextCursor } = await client.postPaged("/storage/recent", { limit }, "nextPage", a.cursor);
     const hasMore = Array.isArray(data) && data.length >= limit;
-    return textResult(withCursor(summarize(data), hasMore ? nextCursor : undefined));
+    return textResult(withCursor(summarizeListing(data), hasMore ? nextCursor : undefined));
   },
 };
 

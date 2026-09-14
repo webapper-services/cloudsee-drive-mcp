@@ -21,8 +21,10 @@ data to anyone.
   public API and returns the result to your AI client. Depending on the tool, this may include
   file and folder names, paths, metadata, tags, and — for uploads — the file content you
   provide.
-- **Links, not credentials.** Download and share tools return **short-lived pre-signed URLs**;
-  the connector never returns AWS credentials.
+- **Links, not credentials.** Download tools return **short-lived pre-signed URLs**; share links
+  are **CloudSee-hosted share pages**, not direct storage URLs, backed by a share record with an
+  explicit expiry (`expiredTimeUTC`) and a `shareId`, so a share can be revoked instead of only
+  expiring. The connector never returns AWS credentials.
 
 ## 2. How the connector uses data
 
