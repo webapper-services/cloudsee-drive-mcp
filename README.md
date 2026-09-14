@@ -121,7 +121,7 @@ Most tools operate on one **drive** (an S3 bucket): pass `bucketName`, or set
 | `get_file_metadata` | Get a file's metadata | read |
 | `get_file_tags` | Get a file's S3 tags | read |
 | `download_file` | Get a temporary pre-signed download URL | download |
-| `share_link` | Create a revocable CloudSee share page link with a stated expiry | write |
+| `share_link` | Create a revocable CloudSee share page link, expiring after a chosen number of hours (default 12) | write |
 | `upload_file` | Upload a file — see [Uploading](#uploading) | write |
 | `upload_status` | Progress of a large upload running in the background (stdio only) | write |
 | `create_folder` | Create a folder | write |

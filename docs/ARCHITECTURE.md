@@ -457,7 +457,7 @@ and returns a `RequestId`; it completes in the background, typically within 1–
 | `get_file_metadata` | `/storage/object/detail` | `drive:read` | live |
 | `get_file_tags` | `/storage/object/tagging` | `drive:read` | live |
 | `download_file` | `/storage/object/download-url` | `drive:read`+`drive:download` | live (pre-signed URL) |
-| `share_link` | `/shares/link/create` (`targetType: "object"`) | `drive:write` | live — token-backed share page, revocable from the dashboard |
+| `share_link` | `/shares/link/create` (`targetType: "object"`) | `drive:write` | live — token-backed share page, revocable from the dashboard; optional `expireTime` in hours (default 12, capped at 30 days) |
 | `upload_file` | `/storage/object/detail` (collision probe) → `/storage/upload/url` → `PUT` → `/storage/upload/complete` (multipart: `/storage/upload/multipart-urls` → `PUT`× → `/storage/upload/complete-parts`) | `drive:write` | live. **stdio** takes `localPath`; **hosted** takes `content` (≤ 256 KB) — see [`src/tools/index.ts`](../src/tools/index.ts) |
 | `create_folder` | `/storage/folder/create` | `drive:write` | live |
 | `duplicate_file` | `/storage/object/duplicate` | `drive:write` | live |

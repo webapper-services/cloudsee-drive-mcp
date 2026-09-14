@@ -155,7 +155,7 @@ confirmation (see below). Most tools need a **drive** — pass `bucketName` (or 
 | `get_file_metadata` | One file's metadata | read | "Get details for `reports/q3.pdf`." |
 | `get_file_tags` | A file's S3 tags | read | "What tags are on `reports/q3.pdf`?" |
 | `download_file` | Temporary pre-signed download URL | download | "Give me a download link for `q3.pdf`." |
-| `share_link` | Revocable CloudSee share page link with a stated expiry | write | "Create a share link for `q3.pdf`." |
+| `share_link` | Revocable CloudSee share page link, expiring after a chosen number of hours (default 12) | write | "Create a 48-hour share link for `q3.pdf`." |
 | `upload_file` | Upload a file (path over stdio, contents when hosted) | write | "Upload `./q3.pdf` to `reports/`." |
 | `upload_status` † | Progress of a large upload running in the background | write | "How's that upload going?" |
 | `create_folder` | Create a folder | write | "Create a `2026/` folder." |

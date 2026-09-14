@@ -85,7 +85,7 @@
     { "name": "get_file_metadata", "description": "Get size, type, timestamps, storage class and other attributes for one file" },
     { "name": "get_file_tags", "description": "Get the S3 object tags attached to a file" },
     { "name": "download_file", "description": "Get a short-lived pre-signed download URL for a file" },
-    { "name": "share_link", "description": "Create a revocable CloudSee share link to a file, with a stated expiry" },
+    { "name": "share_link", "description": "Create a revocable CloudSee share link to a file, for a chosen number of hours" },
     { "name": "upload_file", "description": "Upload a file from this machine into a drive, in parts when it is large" },
     { "name": "upload_status", "description": "Check progress on a large upload that is still running in the background" },
     { "name": "create_folder", "description": "Create a new folder in a drive" },

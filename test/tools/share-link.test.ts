@@ -52,6 +52,35 @@ describe("share_link endpoint", () => {
     expect(body).not.toHaveProperty("download");
   });
 
+  it("forwards expireTime only when the caller sets one, so the server applies its own default", async () => {
+    const withExpiry = vi.fn().mockResolvedValue(createShareLinkResponse);
+    await shareLink.handler(
+      { bucketName: "cloudsee-demo", filePath: "docs/a.txt", expireTime: 48 },
+      { client: fakeClient(withExpiry) },
+    );
+    const [, bodyWithExpiry] = withExpiry.mock.calls[0] as [string, Record<string, unknown>];
+    expect(bodyWithExpiry.expireTime).toBe(48);
+
+    const withoutExpiry = vi.fn().mockResolvedValue(createShareLinkResponse);
+    await shareLink.handler(
+      { bucketName: "cloudsee-demo", filePath: "docs/a.txt" },
+      { client: fakeClient(withoutExpiry) },
+    );
+    const [, bodyWithoutExpiry] = withoutExpiry.mock.calls[0] as [string, Record<string, unknown>];
+    expect(bodyWithoutExpiry).not.toHaveProperty("expireTime");
+  });
+
+  it("rejects a non-positive expireTime before calling the API", async () => {
+    const post = vi.fn();
+    await expect(
+      shareLink.handler(
+        { bucketName: "cloudsee-demo", filePath: "docs/a.txt", expireTime: 0 },
+        { client: fakeClient(post) },
+      ),
+    ).rejects.toThrow();
+    expect(post).not.toHaveBeenCalled();
+  });
+
   it("rejects an empty filePath before calling the API", async () => {
     const post = vi.fn();
     await expect(

@@ -52,20 +52,23 @@ function shareView(data: unknown): Record<string, unknown> {
   };
 }
 
-// No caller-set expiry here on purpose: `StorageService.createShareLink` accepts an
-// `expireTime`, but the public registry row for POST /shares/link/create does not declare it,
-// so the gateway strips the field and the share silently falls back to the 12-hour default
-// (measured on production 2026-09-13). Re-add once CSD-663 declares the parameter.
 const shareSchema = z.object({
   bucketName: bucketField,
   filePath: z.string().min(1).describe("Object key (path) of the file to share, within the drive."),
+  expireTime: z
+    .number()
+    .positive()
+    .optional()
+    .describe(
+      "How long the link stays valid, in hours. Defaults to 12 hours when omitted; the server caps it at 30 days.",
+    ),
   storageId: z.string().optional().describe("Optional storage/index id."),
 });
 const shareLink: ToolDef = {
   name: "share_link",
   title: "Create share link",
   description:
-    "Create a shareable link to a file. Requires the drive (bucketName). Returns a CloudSee share page URL with a stated expiry (default 12 hours) and a share id; the share is revocable from the CloudSee dashboard.",
+    "Create a shareable link to a file. Requires the drive (bucketName). Optionally set expireTime in hours (default 12 hours, capped at 30 days). Returns a CloudSee share page URL with its expiry and a share id; the share is revocable from the CloudSee dashboard.",
   endpoint: { method: "POST", path: "/shares/link/create", scopes: ["drive:write"] },
   inputSchema: shareSchema.shape,
   annotations: { readOnlyHint: true, openWorldHint: true },
@@ -76,6 +79,7 @@ const shareLink: ToolDef = {
       bucketName,
       targetType: "object",
       filePath: a.filePath,
+      ...(a.expireTime !== undefined ? { expireTime: a.expireTime } : {}),
       storageId: a.storageId,
     });
     return textResult(summarize(shareView(data)));
