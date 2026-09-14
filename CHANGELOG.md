@@ -1,3 +1,10 @@
+## [3.0.1](https://github.com/webapper-services/cloudsee-drive-mcp/compare/v3.0.0...v3.0.1) (2026-09-14)
+
+
+### Bug Fixes
+
+* **update_metadata:** keep the fields the caller did not send ([4873a5a](https://github.com/webapper-services/cloudsee-drive-mcp/commit/4873a5ad449a71b3a91d4d316cb1f03d75bb2fae))
+
 # [3.0.0](https://github.com/webapper-services/cloudsee-drive-mcp/compare/v2.0.2...v3.0.0) (2026-09-14)
 
 
