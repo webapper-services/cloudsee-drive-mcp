@@ -2,7 +2,7 @@
   "manifest_version": "0.3",
   "name": "cloudsee-drive",
   "display_name": "CloudSee Drive",
-  "version": "2.0.2",
+  "version": "3.0.0",
   "description": "Browse, search, download, share, upload and organize your CloudSee Drive (Amazon S3) files in natural language.",
   "long_description": "CloudSee Drive is a browser interface for Amazon S3. This extension lets Claude work with your drives directly: list them, browse and search folders, read file metadata and tags, and generate short-lived download and share links. With your permission it can also upload files, create folders, rename, move, duplicate, update metadata, restore archived (Glacier) objects, and delete files.\n\nBecause the extension runs on your own machine, `upload_file` takes a path and streams the file straight to storage — large files are uploaded in parts, with no size ceiling imposed by the conversation.\n\nDestructive actions ask for explicit confirmation before anything changes, and an upload never overwrites an existing file: a name that is already taken gets a timestamp appended.",
   "author": {

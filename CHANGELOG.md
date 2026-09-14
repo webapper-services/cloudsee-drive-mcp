@@ -1,3 +1,22 @@
+# [3.0.0](https://github.com/webapper-services/cloudsee-drive-mcp/compare/v2.0.2...v3.0.0) (2026-09-14)
+
+
+### Bug Fixes
+
+* restore paging, folder lookup, sharing and result bounding ([4383016](https://github.com/webapper-services/cloudsee-drive-mcp/commit/438301690957ffd148224846d06a46b6987f46ca))
+* **share_link:** let the caller choose how long a share lasts ([26ee643](https://github.com/webapper-services/cloudsee-drive-mcp/commit/26ee643547f2e48f0d6d856a4c65cca74fb475b9))
+
+
+### BREAKING CHANGES
+
+* share_link creates a token-backed CloudSee share and returns
+a CloudSee share page URL with an expiry and a share id, where it previously
+returned a raw S3 pre-signed URL. It now requires the drive:write scope
+instead of drive:read and drive:download, so an API key without write access
+can no longer create share links. Code that consumed the returned URL as a
+direct object download must follow the share page instead. download_file is
+unchanged and still returns a short-lived pre-signed URL.
+
 ## [2.0.2](https://github.com/webapper-services/cloudsee-drive-mcp/compare/v2.0.1...v2.0.2) (2026-08-27)
 
 
