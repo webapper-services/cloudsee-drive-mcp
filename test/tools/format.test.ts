@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { summarize, summarizeListing, withCursor } from "../../src/tools/format";
+import { formatMetadataUpdate, summarize, summarizeListing, withCursor } from "../../src/tools/format";
 
 /** A listing envelope shaped like /storage/list's: bulky unprojected index documents first,
  *  the fields that describe the result set last. 21 items renders to ~25k characters. */
@@ -95,5 +95,58 @@ describe("summarizeListing", () => {
     const out = summarizeListing({ items: [{ Name: "a.txt" }], totalItems: 1, note: "x".repeat(20_000) });
     expect(out.length).toBeLessThanOrEqual(8_000 + 100); // the text cut plus its notice
     expect(out).toContain("output truncated");
+  });
+});
+
+describe("formatMetadataUpdate (CSD-664)", () => {
+  const mergeOutcome = {
+    updated: 1,
+    mode: "merge",
+    metadata: { changed: ["project"], cleared: ["description"], kept: ["category"] },
+    tags: { set: ["Age"], removed: [], kept: ["Department", "Breed"], total: 3 },
+  };
+
+  it("enumerates what a merge changed, cleared and kept", () => {
+    const text = formatMetadataUpdate(mergeOutcome, "937896d1");
+    expect(text).toBe(
+      'Updated metadata on storage id "937896d1" (mode: merge — anything you did not send was kept).\n' +
+        "Metadata — changed: project; cleared: description; kept: category.\n" +
+        "Tags — set: Age; kept: Department, Breed; removed: none. 3 tag(s) now on the object.",
+    );
+  });
+
+  it("says what a replace destroyed", () => {
+    const text = formatMetadataUpdate(
+      {
+        updated: 1,
+        mode: "replace",
+        metadata: { changed: ["category"], cleared: ["project", "description"], kept: [] },
+        tags: { set: ["Age"], removed: ["Department", "Breed"], kept: [], total: 1 },
+      },
+      "937896d1",
+    );
+    expect(text).toContain("mode: replace — everything you did not send was cleared");
+    expect(text).toContain("cleared: project, description; kept: none.");
+    expect(text).toContain("removed: Department, Breed. 1 tag(s) now on the object.");
+  });
+
+  it("falls back to the legacy text for the bare update count a pre-CSD-664 backend returns", () => {
+    expect(formatMetadataUpdate(1, "937896d1")).toBe('Updated metadata on storage id "937896d1".\n\n1');
+  });
+
+  it("falls back for any payload that is not the outcome object", () => {
+    const cases: unknown[] = [
+      null,
+      undefined,
+      "ok",
+      [mergeOutcome],
+      { ...mergeOutcome, mode: "patch" },
+      { ...mergeOutcome, metadata: { changed: ["project"], cleared: ["description"] } },
+      { ...mergeOutcome, tags: { set: ["Age"], removed: [], kept: [], total: "3" } },
+      { ...mergeOutcome, metadata: { changed: [1], cleared: [], kept: [] } },
+    ];
+    for (const data of cases) {
+      expect(formatMetadataUpdate(data, "937896d1")).toBe(`Updated metadata on storage id "937896d1".\n\n${summarize(data)}`);
+    }
   });
 });

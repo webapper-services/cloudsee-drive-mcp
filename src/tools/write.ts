@@ -3,7 +3,7 @@ import { basename, dirname } from "node:path";
 import { z } from "zod";
 import { CloudSeeError } from "../errors";
 import { confirmShape, confirmationPreview } from "../confirm";
-import { summarize } from "./format";
+import { formatMetadataUpdate, summarize } from "./format";
 import { mimeForFileName } from "./mime";
 import { createJob, finishJob, getJob, listJobs, recordPart, type UploadJob } from "../uploads";
 import { bucketField, normalizeFolder, resolveBucket, textResult, type ToolContext, type ToolDef } from "./types";
@@ -832,15 +832,25 @@ const deleteFiles: ToolDef = {
 
 // ---- update_metadata → POST /storage/object/metadata (storageUpdateObjectMetadata, drive:write) — destructive ----
 // The endpoint resolves the object by its OpenSearch storage id (the object key
-// is re-read server-side from the index) and SETS the full metadata/tag state:
-// metadata fields left out are cleared to "", and the tags array replaces every
-// existing tag (StorageService.updateObjectInfo).
+// is re-read server-side from the index) and `mode` decides what an omitted
+// value means (CSD-664, StorageService.updateObjectInfo):
+//   merge   — a metadata field you do not send is KEPT, a field sent as "" is
+//             CLEARED, and tags are merged by Key (unmentioned Keys kept).
+//   replace — every metadata field and every tag you do not send is CLEARED.
+// The API defaults to `replace` for backward compatibility; this tool asks for
+// `merge` on every call unless the caller says otherwise, because a model
+// addresses this tool like a patch. Sending tags: [] clears every tag in BOTH
+// modes, so the coercion of an omitted argument to {} / [] must never come back.
 const updateMetaSchema = z.object({
   bucketName: bucketField,
   storageId: z
     .string()
     .min(1)
     .describe("Storage/index id of the object — the StorageId field returned by the INDEXED listing tools (search_files, browse_folder, recent_files). NOTE: list_files reads straight from storage and returns a different id that will NOT work here."),
+  mode: z
+    .enum(["merge", "replace"])
+    .optional()
+    .describe('merge (default): metadata keys you omit are KEPT, a key sent as "" is CLEARED, and tags are merged by Key — a tag with the same Key is overwritten, others are kept. replace: every metadata field and every tag you do not send is CLEARED. Use replace to remove a single tag (send the complete set you want to keep).'),
   metadata: z
     .object({
       category: z.string().optional().describe("Category label."),
@@ -848,18 +858,50 @@ const updateMetaSchema = z.object({
       project: z.string().optional().describe("Project label."),
     })
     .optional()
-    .describe("Metadata to set. Full overwrite: a field left out here is CLEARED on the object."),
+    .describe('Metadata fields to set. Under the default merge mode a field you leave out is KEPT and a field sent as "" is CLEARED; under replace every field you leave out is CLEARED.'),
   tags: z
     .array(z.object({ Key: z.string().min(1), Value: z.string().min(1) }))
     .optional()
-    .describe("The COMPLETE desired tag set for the object. Existing tags are replaced; omitting this clears all tags."),
+    .describe("Tags to apply. Under the default merge mode they are merged by Key — a tag with the same Key is overwritten and tags with other Keys are kept; under replace they become the COMPLETE tag set. Sending [] CLEARS every tag in both modes, and leaving this out keeps the existing tags under merge (clears them under replace)."),
   ...confirmShape,
 });
+
+type MetadataArgs = z.infer<typeof updateMetaSchema>["metadata"];
+type TagArgs = z.infer<typeof updateMetaSchema>["tags"];
+
+/** The unconfirmed preview: what this call will do, in the caller's chosen mode. */
+function metadataUpdatePreview(bucketName: string, mode: "merge" | "replace", metadata: MetadataArgs, tags: TagArgs): string {
+  const sentFields = Object.keys(metadata ?? {});
+  const drive = `Drive: ${bucketName}`;
+  if (mode === "replace") {
+    const fields = sentFields.length > 0 ? sentFields.join(", ") : "(none — all metadata fields will be cleared)";
+    return (
+      `${drive}\nMode: replace — every metadata field and every tag you do not send is CLEARED.\n` +
+      `Metadata fields set: ${fields}\nTags after update: ${tags?.length ?? 0} (existing tags are replaced)`
+    );
+  }
+  const cleared = Object.entries(metadata ?? {})
+    .filter(([, value]) => value === "")
+    .map(([field]) => field);
+  const tagLine =
+    tags === undefined
+      ? "Tags: not sent — existing tags are kept"
+      : tags.length === 0
+        ? "Tags: [] sent — this CLEARS every tag on the object"
+        : `Tags: merged by Key — ${tags.length} sent, tags with other Keys are kept`;
+  return (
+    `${drive}\nMode: merge — anything you do not send is KEPT.\n` +
+    `Metadata fields sent: ${sentFields.length > 0 ? sentFields.join(", ") : "(none — no metadata field will change)"}\n` +
+    `Fields that will be CLEARED (sent empty): ${cleared.length > 0 ? cleared.join(", ") : "(none)"}\n` +
+    tagLine
+  );
+}
+
 const updateMetadata: ToolDef = {
   name: "update_metadata",
   title: "Update file metadata",
   description:
-    "Update a file's metadata (category / description / project) and tags in a drive, addressed by its storage id (the StorageId field from search_files / browse_folder / recent_files — not from list_files). Destructive: this SETS the full state — omitted metadata fields and omitted tags are cleared. Requires the drive (bucketName) and confirm=true. Note: the update rewrites the object in place (S3 copy) — its ETag changes (and may change format) and LastModified is set to the update time; ETag-keyed caches and sync tools will see the object as new. Objects larger than 5 GiB are updated via multipart copy; objects larger than 8 GiB are rejected, because the rewrite cannot finish inside the API request timeout." +
+    'Update a file\'s metadata (category / description / project) and tags in a drive, addressed by its storage id (the StorageId field from search_files / browse_folder / recent_files — not from list_files). Defaults to mode "merge": a metadata field you do not send is KEPT, a field sent as "" is CLEARED, and tags are merged by Key — a tag with the same Key is overwritten and tags with other Keys are kept. Destructive cases: sending tags: [] CLEARS every tag on the object, and mode "replace" clears every metadata field and every tag you do not send — that is also the only way to remove a single tag, by sending the complete set you want to keep. Requires the drive (bucketName) and confirm=true. Note: the update rewrites the object in place (S3 copy) — its ETag changes (and may change format) and LastModified is set to the update time; ETag-keyed caches and sync tools will see the object as new. Objects larger than 5 GiB are updated via multipart copy; objects larger than 8 GiB are rejected, because the rewrite cannot finish inside the API request timeout.' +
     RBAC_NOTE,
   endpoint: { method: "POST", path: "/storage/object/metadata", scopes: ["drive:write"] },
   inputSchema: updateMetaSchema.shape,
@@ -867,21 +909,23 @@ const updateMetadata: ToolDef = {
   handler: async (args, { client, defaultBucket }) => {
     const a = updateMetaSchema.parse(args);
     const bucketName = resolveBucket(a.bucketName, defaultBucket);
+    const mode = a.mode ?? "merge";
     if (!a.confirm) {
-      const fields = Object.keys(a.metadata ?? {}).join(", ") || "(none — all cleared)";
-      const tagCount = a.tags?.length ?? 0;
       return confirmationPreview(
-        `overwrite metadata on storage id "${a.storageId}"`,
-        `Drive: ${bucketName}\nMetadata fields set: ${fields}\nTags after update: ${tagCount} (existing tags are replaced)`,
+        `${mode === "merge" ? "update" : "overwrite"} metadata on storage id "${a.storageId}"`,
+        metadataUpdatePreview(bucketName, mode, a.metadata, a.tags),
       );
     }
+    // An omitted argument must stay OFF the wire: {} is harmless under merge but
+    // [] is a clear-all for tags, and under replace both wipe the object.
     const data = await client.post("/storage/object/metadata", {
       bucketName,
       storageId: a.storageId,
-      metadata: a.metadata ?? {},
-      tags: a.tags ?? [],
+      mode,
+      ...(a.metadata !== undefined ? { metadata: a.metadata } : {}),
+      ...(a.tags !== undefined ? { tags: a.tags } : {}),
     });
-    return textResult(`Updated metadata on storage id "${a.storageId}".\n\n${summarize(data)}`);
+    return textResult(formatMetadataUpdate(data, a.storageId));
   },
 };
 

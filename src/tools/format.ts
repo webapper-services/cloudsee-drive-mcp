@@ -97,6 +97,68 @@ function boundArrays(value: unknown, maxItems: number): unknown {
   return value;
 }
 
+/**
+ * Render what `update_metadata` actually did, from the outcome object the
+ * metadata endpoint returns (CSD-664). A model that just called a destructive
+ * tool has to be told which fields and tags survived — the old response was the
+ * bare update count, which said nothing.
+ *
+ * A backend that predates CSD-664 (or one rolled back to it) answers with that
+ * integer instead, so anything that is not the outcome object falls back to the
+ * previous text. Deploy-order skew must not turn into a crash or a lie.
+ */
+export function formatMetadataUpdate(data: unknown, storageId: string): string {
+  const outcome = readMetadataOutcome(data);
+  if (!outcome) return `Updated metadata on storage id "${storageId}".\n\n${summarize(data)}`;
+  const modeNote =
+    outcome.mode === "merge" ? "anything you did not send was kept" : "everything you did not send was cleared";
+  return (
+    `Updated metadata on storage id "${storageId}" (mode: ${outcome.mode} — ${modeNote}).\n` +
+    `Metadata — changed: ${nameList(outcome.metadata.changed)}; cleared: ${nameList(outcome.metadata.cleared)}; ` +
+    `kept: ${nameList(outcome.metadata.kept)}.\n` +
+    `Tags — set: ${nameList(outcome.tags.set)}; kept: ${nameList(outcome.tags.kept)}; ` +
+    `removed: ${nameList(outcome.tags.removed)}. ${outcome.tags.total} tag(s) now on the object.`
+  );
+}
+
+type MetadataOutcome = {
+  mode: "merge" | "replace";
+  metadata: { changed: string[]; cleared: string[]; kept: string[] };
+  tags: { set: string[]; removed: string[]; kept: string[]; total: number };
+};
+
+function nameList(names: string[]): string {
+  return names.length > 0 ? names.join(", ") : "none";
+}
+
+function stringArray(value: unknown): string[] | undefined {
+  return Array.isArray(value) && value.every((entry) => typeof entry === "string") ? (value as string[]) : undefined;
+}
+
+/** The §2.5 outcome object, or undefined for any other payload (including the legacy integer). */
+function readMetadataOutcome(data: unknown): MetadataOutcome | undefined {
+  if (!data || typeof data !== "object" || Array.isArray(data)) return undefined;
+  const record = data as Record<string, unknown>;
+  if (record.mode !== "merge" && record.mode !== "replace") return undefined;
+  const metadata = record.metadata as Record<string, unknown> | undefined;
+  const tags = record.tags as Record<string, unknown> | undefined;
+  if (!metadata || typeof metadata !== "object" || !tags || typeof tags !== "object") return undefined;
+  const changed = stringArray(metadata.changed);
+  const cleared = stringArray(metadata.cleared);
+  const keptFields = stringArray(metadata.kept);
+  const set = stringArray(tags.set);
+  const removed = stringArray(tags.removed);
+  const keptTags = stringArray(tags.kept);
+  if (!changed || !cleared || !keptFields || !set || !removed || !keptTags || typeof tags.total !== "number") {
+    return undefined;
+  }
+  return {
+    mode: record.mode,
+    metadata: { changed, cleared, kept: keptFields },
+    tags: { set, removed, kept: keptTags, total: tags.total },
+  };
+}
+
 /** Append a continuation hint when the API returned another page. */
 export function withCursor(body: string, nextCursor?: string): string {
   if (!nextCursor) return body;
