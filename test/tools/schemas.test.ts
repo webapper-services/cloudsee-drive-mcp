@@ -49,4 +49,14 @@ describe("tool definitions and input schemas", () => {
     const tool = allTools.find((t) => t.name === "list_files");
     expect(tool!.description).toMatch(/regenerated on every call/i);
   });
+
+  // CSD-667 OQ-4: list_files exposes the same page-size knob as the other listing tools, with
+  // the same bounds. Whatever the caller asks for, the renderer's own bound governs what is sent.
+  it("list_files enforces the same pageSize bounds as browse_folder", () => {
+    const tool = allTools.find((t) => t.name === "list_files");
+    const schema = z.object(tool!.inputSchema);
+    expect(schema.safeParse({ pageSize: 0 }).success).toBe(false);
+    expect(schema.safeParse({ pageSize: 50 }).success).toBe(true);
+    expect(schema.safeParse({ pageSize: 999 }).success).toBe(false);
+  });
 });
