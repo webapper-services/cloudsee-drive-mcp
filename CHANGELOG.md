@@ -1,3 +1,10 @@
+## [3.0.2](https://github.com/webapper-services/cloudsee-drive-mcp/compare/v3.0.1...v3.0.2) (2026-09-15)
+
+
+### Bug Fixes
+
+* **listings:** return every item and stop the cursor from skipping pages ([0aac128](https://github.com/webapper-services/cloudsee-drive-mcp/commit/0aac1285dfb5dd038d712056d8c9ebab86d23bc1))
+
 ## [3.0.1](https://github.com/webapper-services/cloudsee-drive-mcp/compare/v3.0.0...v3.0.1) (2026-09-14)
 
 
