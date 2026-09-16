@@ -28,14 +28,16 @@ In the CloudSee Drive dashboard, create a public-API key. You'll receive a **key
 ### 2. Add the server to Claude Desktop
 
 Open Claude Desktop → **Settings → Developer → Edit Config**, and add a `cloudsee-drive`
-entry under `mcpServers` (no install needed — `npx` fetches it on demand):
+entry under `mcpServers` (no install needed — `npx` fetches the package on demand). Keep the
+`@latest` suffix: it makes npm resolve the published version instead of running an older copy
+it finds already installed on your PATH.
 
 ```json
 {
   "mcpServers": {
     "cloudsee-drive": {
       "command": "npx",
-      "args": ["-y", "@webapper/cloudsee-drive-mcp"],
+      "args": ["-y", "@webapper/cloudsee-drive-mcp@latest"],
       "env": {
         "CLOUDSEE_API_KEY_ID": "<your key id>",
         "CLOUDSEE_API_KEY_SECRET": "<your secret>",
@@ -77,7 +79,11 @@ Desktop to install it.
 npm install -g @webapper/cloudsee-drive-mcp
 ```
 
-or let `npx` fetch it on demand, as in the [Quickstart](#quickstart-5-minutes) above.
+A global install does not update itself — re-run that command to move to a newer release.
+
+Or let `npx` fetch the package for you, as in the [Quickstart](#quickstart-5-minutes) above;
+the `@latest` suffix used there is what makes npm resolve the published version rather than a
+global install that happens to be on PATH.
 
 On macOS that command usually fails the first time with `EACCES: permission denied, mkdir
 '/usr/local/lib/node_modules/@webapper'`. That is npm's global prefix pointing at a directory
@@ -170,8 +176,9 @@ Both shapes behave the same in two ways that matter:
 
 `list_files` lists straight from storage and mints a new object id on every call. Never pass
 that id to `rename_file`, `move_file`, `update_metadata`, or `delete_files`. Use `search_files`,
-`browse_folder`, or `recent_files` instead — their `StorageId` is a persisted id from the search
-index and stays stable across calls.
+`browse_folder`, or `get_file_metadata` instead — their `StorageId` is a persisted id from the
+search index and stays stable across calls. `recent_files` is **not** a source either: the id
+it returns belongs to a different id space and those tools reject it.
 
 ### Destructive operations require confirmation
 

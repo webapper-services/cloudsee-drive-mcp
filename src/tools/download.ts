@@ -68,10 +68,14 @@ const shareLink: ToolDef = {
   name: "share_link",
   title: "Create share link",
   description:
-    "Create a shareable link to a file. Requires the drive (bucketName). Optionally set expireTime in hours (default 12 hours, capped at 30 days). Returns a CloudSee share page URL with its expiry and a share id; the share is revocable from the CloudSee dashboard.",
+    "Create a shareable link to a file. Requires the drive (bucketName). Optionally set expireTime in hours (default 12 hours, capped at 30 days). Returns a CloudSee share page URL with its expiry and a share id. This is a write: it publishes the file to anyone who holds the link until the share expires, and no tool can list or revoke shares — an unwanted share can only be revoked from the CloudSee dashboard.",
   endpoint: { method: "POST", path: "/shares/link/create", scopes: ["drive:write"] },
   inputSchema: shareSchema.shape,
-  annotations: { readOnlyHint: true, openWorldHint: true },
+  // A Shares record is created server-side, so this is not read-only (CSD-668 F-08): a
+  // readOnlyHint lets a client auto-run the tool without its permission prompt. Not
+  // destructive — the share adds a capability, it removes nothing — which matches
+  // create_folder's shape and keeps the tool out of the two-step confirm set.
+  annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
   handler: async (args, { client, defaultBucket }) => {
     const a = shareSchema.parse(args);
     const bucketName = resolveBucket(a.bucketName, defaultBucket);

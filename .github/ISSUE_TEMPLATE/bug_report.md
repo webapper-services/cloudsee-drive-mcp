@@ -17,7 +17,7 @@ A clear description of what went wrong.
 What you expected instead.
 
 **Environment**
-- Package version: <!-- `npx @webapper/cloudsee-drive-mcp --version` or from package.json -->
+- Package version: <!-- `npx @webapper/cloudsee-drive-mcp@latest --version` or from package.json -->
 - Node.js version:
 - OS:
 - `CLOUDSEE_API_BASE_URL` (prod / uat / custom — **do not include keys**):

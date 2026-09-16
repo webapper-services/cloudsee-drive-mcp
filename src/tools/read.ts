@@ -161,7 +161,7 @@ const listFiles: ToolDef = {
   name: "list_files",
   title: "List files in a drive",
   description:
-    "List the files in a drive straight from storage, recursively by default — the most reliable way to see what a drive actually contains. Requires the drive (bucketName). Returns names, sizes, storage classes and keys, with pagination. The object id in each result is regenerated on every call and must never be used for rename_file, move_file, update_metadata, or delete_files — use search_files, browse_folder, or recent_files for a stable StorageId instead. " +
+    "List the files in a drive straight from storage, recursively by default — the most reliable way to see what a drive actually contains. Requires the drive (bucketName). Returns names, sizes, storage classes and keys, with pagination. The object id in each result is regenerated on every call and must never be used for rename_file, move_file, update_metadata, or delete_files — use search_files, browse_folder, or get_file_metadata for a stable StorageId instead (recent_files returns a different id space and will not work there either). " +
     WALK_HINT,
   endpoint: { method: "POST", path: "/storage/bucket/files", scopes: ["drive:read"] },
   inputSchema: listFilesSchema.shape,

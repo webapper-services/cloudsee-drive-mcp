@@ -604,7 +604,7 @@ const storageIdField = z
   .string()
   .min(1)
   .describe(
-    "Storage/index id of the object — the StorageId field returned by the INDEXED listing tools (search_files, browse_folder, recent_files). NOTE: list_files reads straight from storage and returns a different id that will NOT work here.",
+    "Storage/index id of the object — the StorageId field returned by search_files, browse_folder, or get_file_metadata. NOTE: the ids from list_files and recent_files belong to a different id space and will NOT work here.",
   );
 
 /** Body fields common to every queue-backed request. */
@@ -677,7 +677,7 @@ const renameFile: ToolDef = {
   name: "rename_file",
   title: "Rename file or folder",
   description:
-    "Rename a file or folder in a drive, addressed by its exact object key plus its storage id (the StorageId field from search_files / browse_folder / recent_files — not from list_files). Queued: returns a RequestId and the rename completes in the background, typically under 2 minutes — verify by listing until the new name appears. Requires the drive (bucketName). Destructive (changes the object's key). Requires confirm=true." +
+    "Rename a file or folder in a drive, addressed by its exact object key plus its storage id (the StorageId field from search_files / browse_folder / get_file_metadata — not from list_files or recent_files, whose ids are a different id space and will NOT work). Queued: returns a RequestId and the rename completes in the background, typically under 2 minutes — verify by listing until the new name appears. Requires the drive (bucketName). Destructive (changes the object's key). Requires confirm=true." +
     RBAC_NOTE,
   endpoint: { method: "POST", path: "/storage/object/rename-request", scopes: ["drive:write"] },
   inputSchema: renameSchema.shape,
@@ -721,7 +721,7 @@ const moveFile: ToolDef = {
   name: "move_file",
   title: "Move or copy file",
   description:
-    "Move (or copy, with asCopy=true) a file or folder to a new location, addressed by its exact object key plus its storage id (the StorageId field from search_files / browse_folder / recent_files — not from list_files). Queued: returns a RequestId and the operation completes in the background, typically under 2 minutes — verify by listing until the object appears at the destination. Requires the source drive (bucketName). A move removes the source and is destructive, so it requires confirm=true; a copy does not." +
+    "Move (or copy, with asCopy=true) a file or folder to a new location, addressed by its exact object key plus its storage id (the StorageId field from search_files / browse_folder / get_file_metadata — not from list_files or recent_files, whose ids are a different id space and will NOT work). Queued: returns a RequestId and the operation completes in the background, typically under 2 minutes — verify by listing until the object appears at the destination. Requires the source drive (bucketName). A move removes the source and is destructive, so it requires confirm=true; a copy does not." +
     RBAC_NOTE,
   endpoint: { method: "POST", path: "/storage/object/move-request", scopes: ["drive:write"] },
   inputSchema: moveSchema.shape,
@@ -784,7 +784,7 @@ const deleteFiles: ToolDef = {
   name: "delete_files",
   title: "Delete files",
   description:
-    "Permanently delete one or more files/folders from a drive, each addressed by its exact object key plus its storage id (the StorageId field from search_files / browse_folder / recent_files — not from list_files). Queued: returns a RequestId per object and the deletes complete in the background, typically under 2 minutes — verify by listing until the objects disappear. Requires the drive (bucketName). Destructive and irreversible. Requires confirm=true." +
+    "Permanently delete one or more files/folders from a drive, each addressed by its exact object key plus its storage id (the StorageId field from search_files / browse_folder / get_file_metadata — not from list_files or recent_files, whose ids are a different id space and will NOT work). Queued: returns a RequestId per object and the deletes complete in the background, typically under 2 minutes — verify by listing until the objects disappear. Requires the drive (bucketName). Destructive and irreversible. Requires confirm=true." +
     RBAC_NOTE,
   endpoint: { method: "POST", path: "/storage/objects/delete-request", scopes: ["drive:delete"] },
   inputSchema: deleteSchema.shape,
@@ -846,7 +846,7 @@ const updateMetaSchema = z.object({
   storageId: z
     .string()
     .min(1)
-    .describe("Storage/index id of the object — the StorageId field returned by the INDEXED listing tools (search_files, browse_folder, recent_files). NOTE: list_files reads straight from storage and returns a different id that will NOT work here."),
+    .describe("Storage/index id of the object — the StorageId field returned by search_files, browse_folder, or get_file_metadata. NOTE: the ids from list_files and recent_files belong to a different id space and will NOT work here."),
   mode: z
     .enum(["merge", "replace"])
     .optional()
@@ -901,7 +901,7 @@ const updateMetadata: ToolDef = {
   name: "update_metadata",
   title: "Update file metadata",
   description:
-    'Update a file\'s metadata (category / description / project) and tags in a drive, addressed by its storage id (the StorageId field from search_files / browse_folder / recent_files — not from list_files). Defaults to mode "merge": a metadata field you do not send is KEPT, a field sent as "" is CLEARED, and tags are merged by Key — a tag with the same Key is overwritten and tags with other Keys are kept. Destructive cases: sending tags: [] CLEARS every tag on the object, and mode "replace" clears every metadata field and every tag you do not send — that is also the only way to remove a single tag, by sending the complete set you want to keep. Requires the drive (bucketName) and confirm=true. Note: the update rewrites the object in place (S3 copy) — its ETag changes (and may change format) and LastModified is set to the update time; ETag-keyed caches and sync tools will see the object as new. Objects larger than 5 GiB are updated via multipart copy; objects larger than 8 GiB are rejected, because the rewrite cannot finish inside the API request timeout.' +
+    'Update a file\'s metadata (category / description / project) and tags in a drive, addressed by its storage id (the StorageId field from search_files / browse_folder / get_file_metadata — not from list_files or recent_files, whose ids are a different id space and will NOT work). Defaults to mode "merge": a metadata field you do not send is KEPT, a field sent as "" is CLEARED, and tags are merged by Key — a tag with the same Key is overwritten and tags with other Keys are kept. Destructive cases: sending tags: [] CLEARS every tag on the object, and mode "replace" clears every metadata field and every tag you do not send — that is also the only way to remove a single tag, by sending the complete set you want to keep. Requires the drive (bucketName) and confirm=true. Note: the update rewrites the object in place (S3 copy) — its ETag changes (and may change format) and LastModified is set to the update time; ETag-keyed caches and sync tools will see the object as new. Objects larger than 5 GiB are updated via multipart copy; objects larger than 8 GiB are rejected, because the rewrite cannot finish inside the API request timeout.' +
     RBAC_NOTE,
   endpoint: { method: "POST", path: "/storage/object/metadata", scopes: ["drive:write"] },
   inputSchema: updateMetaSchema.shape,

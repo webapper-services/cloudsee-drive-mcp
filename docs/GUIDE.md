@@ -30,8 +30,10 @@ verified against UAT (`https://drive-api-uat.cloudsee.cloud`) on **2026-07-10**.
 
 ### Option A — `npx` (recommended for Claude Desktop)
 
-No install step; `npx` fetches and runs the latest published version on demand. Use the
-Claude Desktop config in [§3](#3-configuration).
+No install step; `npx` fetches the package and runs it on demand. Always spell the package
+with its `@latest` tag — `@webapper/cloudsee-drive-mcp@latest` — so npm resolves the published
+version; a bare name lets an older global install on your PATH run instead. Use the Claude
+Desktop config in [§3](#3-configuration).
 
 ### Option B — global binary
 
@@ -39,6 +41,8 @@ Claude Desktop config in [§3](#3-configuration).
 npm install -g @webapper/cloudsee-drive-mcp
 cloudsee-drive-mcp --help   # the bin entry; normally launched by an MCP client over stdio
 ```
+
+A global install does not update itself — re-run the command above to move to a newer release.
 
 ---
 
@@ -68,7 +72,7 @@ entry (merge into any existing `mcpServers`):
   "mcpServers": {
     "cloudsee-drive": {
       "command": "npx",
-      "args": ["-y", "@webapper/cloudsee-drive-mcp"],
+      "args": ["-y", "@webapper/cloudsee-drive-mcp@latest"],
       "env": {
         "CLOUDSEE_API_KEY_ID": "<your key id>",
         "CLOUDSEE_API_KEY_SECRET": "<your secret>",
@@ -84,7 +88,7 @@ start, swap `command`/`args` for a `cmd /c` wrapper:
 
 ```json
 "command": "cmd",
-"args": ["/c", "npx", "-y", "@webapper/cloudsee-drive-mcp"],
+"args": ["/c", "npx", "-y", "@webapper/cloudsee-drive-mcp@latest"],
 ```
 
 Then **fully quit** Claude Desktop (from the system tray on Windows — not just the window) and
@@ -173,7 +177,7 @@ again with `confirm: true` to execute:
 
 ```jsonc
 // 1st call → preview only, nothing deleted
-{ "name": "delete_files", "arguments": { "objects": [{ "key": "tmp/scratch.txt", "storageId": "<StorageId from search_files/browse_folder/recent_files>" }] } }
+{ "name": "delete_files", "arguments": { "objects": [{ "key": "tmp/scratch.txt", "storageId": "<StorageId from search_files/browse_folder/get_file_metadata>" }] } }
 // 2nd call → queues the delete (returns a RequestId; completes in the background)
 { "name": "delete_files", "arguments": { "objects": [{ "key": "tmp/scratch.txt", "storageId": "<StorageId>" }], "confirm": true } }
 ```
@@ -194,10 +198,11 @@ prompt shows.
 enqueues the operation and returns a queue `RequestId`; the operation completes in the
 background, typically within 1–2 minutes — verify by listing. They address the object by its
 exact `objectKey` (from any listing tool; folders keep their trailing slash) **plus** its
-`storageId` — the `StorageId` field returned by the indexed listing tools (`search_files`,
-`browse_folder`, `recent_files`; the id from `list_files` will **not** work, because
-`list_files` lists straight from storage and mints a brand-new id for every object on every
-call — it is never the same id twice):
+`storageId` — the `StorageId` field returned by `search_files`, `browse_folder` or
+`get_file_metadata`. The ids from `list_files` and `recent_files` will **not** work: `list_files`
+lists straight from storage and mints a brand-new id for every object on every call — it is
+never the same id twice — and `recent_files` returns an id from a different id space, which
+these endpoints cannot resolve:
 
 - `rename_file`: `objectKey` + `newName` + `storageId` + `confirm`
 - `move_file`: `objectKey` + `destinationPath` + `storageId` (+ `asCopy` to copy; a move needs `confirm`)
@@ -368,7 +373,7 @@ Other notes:
 | A rename/move/copy/delete "succeeded" but the listing looks unchanged | These operations are queued: the tool returns a RequestId and the change completes in the background, typically within 1–2 minutes. Re-list after a short wait. |
 | `Pagination cursor is not valid for this operation` | You passed a `cursor` from a different tool. Cursors are operation-specific; re-page the same tool. |
 | Server won't start: "not configured" | A required env var is missing — set `CLOUDSEE_API_KEY_ID` and `CLOUDSEE_API_KEY_SECRET`. |
-| Server won't start on **Windows** (`npx` not found) | Claude Desktop can't resolve `npx` directly. Use `"command": "cmd", "args": ["/c","npx","-y","@webapper/cloudsee-drive-mcp"]`, or `npm i -g @webapper/cloudsee-drive-mcp` and point `command` at the installed binary. |
+| Server won't start on **Windows** (`npx` not found) | Claude Desktop can't resolve `npx` directly. Use `"command": "cmd", "args": ["/c","npx","-y","@webapper/cloudsee-drive-mcp@latest"]`. |
 | No tools icon / server not listed | The icon only appears once a server connects. Check **Settings → Developer**; if absent, the config wasn't read — validate the JSON and fully restart from the system tray. |
 | Tool calls hang then error | Network/endpoint reachability or a slow API. Raise `CLOUDSEE_TIMEOUT_MS`; check the base URL. |
 | Garbled MCP output | Something wrote to **stdout** (the transport). All app logs must go to stderr; set `CLOUDSEE_LOG_LEVEL=error` to quiet them. |
