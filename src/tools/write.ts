@@ -642,6 +642,37 @@ function requestIdSuffix(data: unknown): string {
   return requestId ? ` (RequestId: ${requestId})` : "";
 }
 
+/**
+ * `TargetResolved` from a delete-request response (storage-api, CSD-668 WP-3a): did the
+ * server find an indexed object behind the storage id it just queued a delete for?
+ *
+ * `undefined` is a third state, not a synonym for `false`: a server that predates the field
+ * says nothing about the target, and rendering silence as "not found" would invent a warning.
+ */
+function pickTargetResolved(data: unknown): boolean | undefined {
+  if (data && typeof data === "object") {
+    const value = (data as Record<string, unknown>)["TargetResolved"];
+    if (typeof value === "boolean") return value;
+  }
+  return undefined;
+}
+
+/**
+ * What one accepted delete request actually establishes.
+ *
+ * The endpoint enqueues a Delete without requiring the target to resolve, so a bare "queued"
+ * read as confirmation is how a model came to report a file deleted that never existed
+ * (CSD-668 F-04). The outcome therefore states what was established — the queue took the row
+ * — and, when the server says so, that the row names nothing it can see.
+ */
+function deleteOutcome(data: unknown): string {
+  const accepted = `queued — the delete queue accepted this request${requestIdSuffix(data)}`;
+  const resolved = pickTargetResolved(data);
+  if (resolved === false) return `${accepted}; WARNING: the server could not resolve this object, so the request may delete nothing`;
+  if (resolved === true) return `${accepted}; target resolved`;
+  return accepted;
+}
+
 // ---- create_folder → POST /storage/folder/create (createFolder, drive:write) ----
 const createFolderSchema = z.object({
   bucketName: bucketField,
@@ -800,6 +831,7 @@ const deleteFiles: ToolDef = {
     }
     const outcomes: string[] = [];
     let failures = 0;
+    let unresolved = 0;
     for (const object of a.objects) {
       try {
         // The file-delete processor reads SourcePath — not ObjectKey — so it must
@@ -811,7 +843,8 @@ const deleteFiles: ToolDef = {
           DestinationPath: object.key,
           DestinationBucket: bucketName,
         });
-        outcomes.push(`  - ${object.key}: queued${requestIdSuffix(data)}`);
+        if (pickTargetResolved(data) === false) unresolved += 1;
+        outcomes.push(`  - ${object.key}: ${deleteOutcome(data)}`);
       } catch (err) {
         failures += 1;
         const reason = err instanceof Error ? err.message : String(err);
@@ -820,10 +853,17 @@ const deleteFiles: ToolDef = {
     }
     const headline =
       failures === 0
-        ? `Queued ${a.objects.length} delete request(s).`
-        : `Queued ${a.objects.length - failures} of ${a.objects.length} delete request(s); ${failures} FAILED.`;
+        ? `The delete queue accepted ${a.objects.length} request(s).`
+        : `The delete queue accepted ${a.objects.length - failures} of ${a.objects.length} request(s); ${failures} FAILED.`;
+    // A key that never existed also never appears in a listing, so "verify by listing" cannot
+    // by itself distinguish a completed delete from a request against nothing (CSD-668 §2).
+    const unresolvedNote =
+      unresolved > 0
+        ? ` ${unresolved} request(s) name an object the server could not resolve — check the object key and its storage id rather than reading a disappearance from a listing as proof.`
+        : "";
     const result = textResult(
-      `${headline} Deletes complete in the background, typically under 2 minutes — verify by listing until the objects disappear.\n${outcomes.join("\n")}`,
+      `${headline} Acceptance means the request was queued, not that the object was deleted or that it exists. ` +
+        `Deletes complete in the background, typically under 2 minutes — verify by listing until the objects disappear.${unresolvedNote}\n${outcomes.join("\n")}`,
     );
     if (failures > 0) result.isError = true;
     return result;
@@ -869,14 +909,22 @@ const updateMetaSchema = z.object({
 type MetadataArgs = z.infer<typeof updateMetaSchema>["metadata"];
 type TagArgs = z.infer<typeof updateMetaSchema>["tags"];
 
+/**
+ * CSD-668 O4. The target of this call is 64 hex characters no human can sanity-check, and the
+ * preview makes no server call — so the screen must not read as if the id had been verified.
+ * It says what it is: an argument copied back, not an object that was found.
+ */
+const TARGET_NOT_LOOKED_UP =
+  "Target: the storage id is copied from your request — it was NOT looked up, so this screen cannot tell you whether it exists or which object it names. Check it against the StorageId from search_files, browse_folder or get_file_metadata before confirming.";
+
 /** The unconfirmed preview: what this call will do, in the caller's chosen mode. */
 function metadataUpdatePreview(bucketName: string, mode: "merge" | "replace", metadata: MetadataArgs, tags: TagArgs): string {
   const sentFields = Object.keys(metadata ?? {});
-  const drive = `Drive: ${bucketName}`;
+  const target = `Drive: ${bucketName}\n${TARGET_NOT_LOOKED_UP}`;
   if (mode === "replace") {
     const fields = sentFields.length > 0 ? sentFields.join(", ") : "(none — all metadata fields will be cleared)";
     return (
-      `${drive}\nMode: replace — every metadata field and every tag you do not send is CLEARED.\n` +
+      `${target}\nMode: replace — every metadata field and every tag you do not send is CLEARED.\n` +
       `Metadata fields set: ${fields}\nTags after update: ${tags?.length ?? 0} (existing tags are replaced)`
     );
   }
@@ -890,7 +938,7 @@ function metadataUpdatePreview(bucketName: string, mode: "merge" | "replace", me
         ? "Tags: [] sent — this CLEARS every tag on the object"
         : `Tags: merged by Key — ${tags.length} sent, tags with other Keys are kept`;
   return (
-    `${drive}\nMode: merge — anything you do not send is KEPT.\n` +
+    `${target}\nMode: merge — anything you do not send is KEPT.\n` +
     `Metadata fields sent: ${sentFields.length > 0 ? sentFields.join(", ") : "(none — no metadata field will change)"}\n` +
     `Fields that will be CLEARED (sent empty): ${cleared.length > 0 ? cleared.join(", ") : "(none)"}\n` +
     tagLine

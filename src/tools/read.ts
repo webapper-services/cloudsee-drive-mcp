@@ -237,6 +237,26 @@ const recentFiles: ToolDef = {
 };
 
 // ---- get_file_metadata → POST /storage/object/detail (storageDetail, drive:read) ----
+
+/**
+ * The information ceiling CSD-638 set for an object the caller cannot be shown: absence and
+ * access denial answer with the SAME sentence, so the pair cannot be used to probe for
+ * objects in accounts the credential cannot reach. Copied verbatim from the server's own
+ * wording (storage-api PublicApiErrorClassifier) so `get_file_metadata` and `get_file_tags`
+ * answer identically for the same missing object — the tagging endpoint throws and reaches
+ * the classifier, while `/storage/object/detail` swallows the miss and answers `null`.
+ */
+const OBJECT_NOT_AVAILABLE = "The specified object does not exist or is not available to your credential.";
+
+/** `/storage/object/detail` answers `success:true, data:null` for an object it cannot resolve
+ *  (StorageService.#getIndexedObjectDetail and ObjectRepository.getObject both swallow), and an
+ *  endpoint that returns an empty payload is indistinguishable from it on the wire. */
+function isEmptyDetail(data: unknown): boolean {
+  if (data === null || data === undefined) return true;
+  if (Array.isArray(data)) return data.length === 0;
+  return typeof data === "object" && Object.keys(data as Record<string, unknown>).length === 0;
+}
+
 const metaSchema = z.object({
   bucketName: bucketField,
   objectKey: z.string().min(1).describe("Full object key (path) of the file within the drive."),
@@ -253,6 +273,11 @@ const getFileMetadata: ToolDef = {
     const a = metaSchema.parse(args);
     const bucketName = resolveBucket(a.bucketName, defaultBucket);
     const data = await client.post("/storage/object/detail", { bucketName, objectKey: a.objectKey });
+    if (isEmptyDetail(data)) {
+      const result = textResult(OBJECT_NOT_AVAILABLE);
+      result.isError = true;
+      return result;
+    }
     return textResult(summarize(data));
   },
 };

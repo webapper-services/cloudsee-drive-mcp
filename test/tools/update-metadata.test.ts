@@ -105,6 +105,26 @@ describe("update_metadata", () => {
     expect(text).toContain("Tags: not sent — existing tags are kept");
   });
 
+  // CSD-668 O4. The preview is callless by design, so the storage id on the screen is an
+  // argument echoed back, not an object that was found. The wording has to say so: 64 hex
+  // characters look authoritative, and the confirmation is the last point a wrong id can be
+  // caught. Both modes, because both render the same target.
+  (["merge", "replace"] as const).forEach((mode) => {
+    it(`states in the ${mode} preview that the storage id was copied, not looked up`, async () => {
+      const post = vi.fn();
+      const res = await tool.handler(
+        { bucketName: "test-bucket", storageId: "os-doc-123", mode, metadata: { category: "X" } },
+        { client: fakeClient(post) },
+      );
+
+      expect(post).not.toHaveBeenCalled();
+      const text = previewText(res);
+      expect(text).toContain("copied from your request");
+      expect(text).toContain("NOT looked up");
+      expect(text).toContain("get_file_metadata");
+    });
+  });
+
   it("previews the destructive wording for an explicit replace", async () => {
     const post = vi.fn();
     const res = await tool.handler(
