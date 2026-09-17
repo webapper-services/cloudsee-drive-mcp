@@ -145,7 +145,7 @@ printf '%s\n%s\n' \
 
 ## 5. Tools & example commands
 
-18 tools. "Access" is the seed scope the backing endpoint requires. **confirm** = two-step
+19 tools. "Access" is the seed scope the backing endpoint requires. **confirm** = two-step
 confirmation (see below). Most tools need a **drive** — pass `bucketName` (or set
 `CLOUDSEE_DEFAULT_BUCKET`); `recent_files` and `list_buckets` don't.
 
@@ -169,6 +169,7 @@ confirmation (see below). Most tools need a **drive** — pass `bucketName` (or 
 | `delete_files` | Permanently delete objects | delete · **confirm** | "Delete `tmp/scratch.txt`." |
 | `update_metadata` | Update a file's metadata | write · **confirm** | "Set category=Finance on `q3.pdf`." |
 | `restore_archived_file` | Un-archive a Glacier object | write · **confirm** | "Restore archived `cold/2019.zip`." |
+| `get_version` | This connector's version, tool count and configured API host (makes no API call) | read | "What version of the CloudSee connector is running?" |
 
 ### Destructive confirmation flow
 

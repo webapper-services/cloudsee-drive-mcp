@@ -39,8 +39,8 @@ console.log(tools.map((t) => `  - ${t.name}${t.annotations?.destructiveHint ? " 
 const destructive = tools.filter((t) => t.annotations?.destructiveHint).map((t) => t.name);
 console.log(`destructive (confirm-gated): ${destructive.join(", ")}`);
 
-if (tools.length !== 18) {
-  console.error(`EXPECTED 18 tools, got ${tools.length}`);
+if (tools.length !== 19) {
+  console.error(`EXPECTED 19 tools, got ${tools.length}`);
   process.exit(1);
 }
 console.log("SMOKE OK");

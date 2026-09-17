@@ -155,7 +155,7 @@ The actual frames on the wire (one per line):
 
 `serverInfo.name`/`version` come straight from `new McpServer({ name: "cloudsee-drive-mcp", version: VERSION })`
 ([`src/server.ts:16`](../src/server.ts)). The [`scripts/smoke.mjs`](../scripts/smoke.mjs) test performs
-exactly this handshake + `tools/list` and asserts 18 tools — fully offline, since listing makes no API call.
+exactly this handshake + `tools/list` and asserts 19 tools — fully offline, since listing makes no API call.
 
 ---
 
