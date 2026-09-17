@@ -1,3 +1,15 @@
+# [3.1.0](https://github.com/webapper-services/cloudsee-drive-mcp/compare/v3.0.3...v3.1.0) (2026-09-17)
+
+
+### Bug Fixes
+
+* stop reporting unverified objects as confirmed ([c327f7b](https://github.com/webapper-services/cloudsee-drive-mcp/commit/c327f7bc9cb62aac8481238cccd61eda45ebad02))
+
+
+### Features
+
+* answer which build and host the connector is running ([bbf8865](https://github.com/webapper-services/cloudsee-drive-mcp/commit/bbf88653aa7664dbd3428e370852c0cbaedeb5b3))
+
 ## [3.0.3](https://github.com/webapper-services/cloudsee-drive-mcp/compare/v3.0.2...v3.0.3) (2026-09-16)
 
 
