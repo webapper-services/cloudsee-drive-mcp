@@ -52,24 +52,18 @@ export function foldForMatching(value: string): string {
 }
 
 /**
- * How many indexed items the resolution lookup asks for. A name keyword matches a handful of
- * items in one folder, and a page that comes back full is treated as inconclusive below — so
- * this only has to be wide enough that a single match is never an artefact of the page size.
+ * How many indexed items the resolution lookup asks for. The lookup lists the key's own folder
+ * whole, so this has to cover that folder's direct children: a page that comes back full is
+ * treated as inconclusive below, which makes a folder wider than this lose the recovery. 200 is
+ * the connector's own listing ceiling (`MAX_PAGE_ITEMS` in read.ts), not a new bound.
  */
-const RESOLUTION_PAGE_SIZE = 50;
+const RESOLUTION_PAGE_SIZE = 200;
 
-/** Parent prefix (keeping its trailing slash, the way the index stores `Parent`) and the name
- *  of an object key. A key with no slash sits at the drive root, which the server reads as "". */
-function splitKey(objectKey: string): { dirPath: string; name: string } {
+/** The parent prefix of an object key, keeping its trailing slash the way the index stores
+ *  `Parent`. A key with no slash sits at the drive root, which the server reads as "". */
+function parentPrefix(objectKey: string): string {
   const lastSlash = objectKey.lastIndexOf("/");
-  if (lastSlash === -1) return { dirPath: "", name: objectKey };
-  return { dirPath: objectKey.slice(0, lastSlash + 1), name: objectKey.slice(lastSlash + 1) };
-}
-
-/** The search term for the lookup: runs of non-ASCII collapsed to a single space, so a name
- *  that differs from the drive's only inside such a run still reaches the same keyword. */
-function searchKeyword(name: string): string {
-  return name.replace(/[^\x20-\x7E]+/g, " ").replace(/\s+/g, " ").trim();
+  return lastSlash === -1 ? "" : objectKey.slice(0, lastSlash + 1);
 }
 
 /** The items of a `/storage/list` answer: an envelope's `items`, or a bare array. (format.ts
@@ -96,22 +90,28 @@ function itemKey(item: unknown): string | undefined {
  * it and that name is not the spelling already tried. `undefined` — no candidate, more than
  * one, a page that may have been cut, or a failed lookup — means "do not retry", and is the
  * answer that keeps the CSD-638 ceiling intact.
+ *
+ * The lookup asks for the key's own folder and NOTHING else: no `searchingKeyword`. A keyword
+ * can only be built from the spelling the caller typed, and the server matches it as a
+ * byte-exact substring of the whole indexed `Name` — so for the very case this recovery exists
+ * for, the keyword is the broken spelling and matches nothing (CSD-586, measured on production
+ * 2026-09-17). Fetching the folder leaves every judgement to `foldForMatching`, which makes no
+ * assumption about which character was substituted.
  */
 export async function resolveIndexedKey(
   client: IndexedListingClient,
   bucketName: string,
   objectKey: string,
 ): Promise<string | undefined> {
-  const { dirPath, name } = splitKey(objectKey);
-  const keyword = searchKeyword(name);
-  if (!keyword) return undefined;
+  // A trailing slash names a folder. Every listed key of that folder is a child, so none of them
+  // can fold onto it, and the lookup could only spend a call to find that out.
+  if (objectKey.endsWith("/")) return undefined;
 
   let data: unknown;
   try {
     data = await client.post("/storage/list", {
       bucketName,
-      dirPath,
-      searchingKeyword: keyword,
+      dirPath: parentPrefix(objectKey),
       pageSize: RESOLUTION_PAGE_SIZE,
     });
   } catch {

@@ -37,8 +37,9 @@ const DOWNLOAD_URL = "/storage/object/download-url";
 const SHARE_CREATE = "/shares/link/create";
 const LIST = "/storage/list";
 
-/** The page size the resolution lookup asks for; a page that comes back this full is ambiguous. */
-const RESOLUTION_PAGE_SIZE = 50;
+/** The page size the resolution lookup asks for; a page that comes back this full is ambiguous.
+ *  An independent copy of the constant in keyResolution.ts — the two must move together. */
+const RESOLUTION_PAGE_SIZE = 200;
 
 /** One message, used at a 5xx and at a 404, so the two cases differ ONLY in the status. */
 const SERVER_FAULT = "CloudSee API error for /storage/object/download-url: Internal server error";
@@ -355,7 +356,11 @@ describe("A2 — failures a different spelling could not fix are never resolved"
 });
 
 describe("A2 — the shape of the resolution lookup", () => {
-  it("asks the key's own folder for the name, with the non-ASCII run collapsed into the keyword", async () => {
+  // Any keyword the connector can build is made from the spelling the caller typed, and the
+  // server matches it as a byte-exact substring of the whole `Name` — so the one keyword worth
+  // sending is the one that misses (CSD-586, measured on production 2026-09-17). The lookup asks
+  // for the folder itself instead, and leaves the matching to `foldForMatching`.
+  it("asks the key's own folder for its listing, and sends no keyword at all", async () => {
     const h = harness({ [DOWNLOAD_URL]: downloadProbe.miss, [LIST]: () => ({ items: [] }) });
 
     await outcomeOf(downloadProbe.tool, downloadProbe.args, h.ctx);
@@ -363,10 +368,7 @@ describe("A2 — the shape of the resolution lookup", () => {
     const [lookup] = h.callsTo(LIST);
     expect(lookup!.body.bucketName).toBe("cloudsee-demo");
     expect(lookup!.body.dirPath).toBe(FOLDER);
-    expect(lookup!.body.searchingKeyword).toBe(`${BASENAME} PM.png`);
-    // A keyword carrying the very character that did not survive would search for a spelling the
-    // caller could not have produced.
-    expect(String(lookup!.body.searchingKeyword)).toMatch(/^[\x20-\x7E]*$/);
+    expect(lookup!.body).not.toHaveProperty("searchingKeyword");
     expect(lookup!.body.pageSize).toBe(RESOLUTION_PAGE_SIZE);
   });
 
@@ -451,6 +453,106 @@ describe("A2 — the shape of the resolution lookup", () => {
 
     await outcomeOf(downloadProbe.tool, downloadProbe.args, h.ctx);
 
+    expect(h.callsTo(DOWNLOAD_URL)).toHaveLength(1);
+  });
+});
+
+/** A folder whose basename carries no ASCII at all — the case the old keyword reduced to "". */
+const NON_ASCII_FOLDER = "文書/";
+/** Fullwidth digits, which NFKC folds onto ASCII ones — so the two spellings fold alike. */
+const NON_ASCII_TYPED_KEY = `${NON_ASCII_FOLDER}報告書２０２６`;
+const NON_ASCII_DRIVE_KEY = `${NON_ASCII_FOLDER}報告書2026`;
+
+/**
+ * Answers `/storage/list` the way production does (SearchObjectService.getBucketObjects):
+ *  - with a keyword: a wildcard `*keyword*` over the whole, un-analysed `Name` — a byte-exact
+ *    substring, NOT a tokenised search;
+ *  - without a keyword: `term` on `Parent` — the folder's direct children.
+ *
+ * The constant stubs above cannot see the defect this pins, because they answer the same page
+ * whatever the connector asks for: they assert the connector's own assumption back at it. The
+ * keyword the connector used to send is the caller's broken spelling, which is a substring of no
+ * indexed `Name` (CSD-586, measured on production 2026-09-17).
+ */
+function indexedFolder(keys: string[]): Route {
+  return (body) => {
+    const keyword = body.searchingKeyword as string | undefined;
+    const dirPath = (body.dirPath as string) ?? "";
+    const items = keys
+      .filter((key) => key.slice(0, key.lastIndexOf("/") + 1) === dirPath)
+      .filter((key) => keyword === undefined || key.slice(key.lastIndexOf("/") + 1).includes(keyword))
+      .map(indexedItem);
+    return { items, totalItems: items.length };
+  };
+}
+
+/** The key-addressed endpoint answering the way S3 and the index do: byte-exactly, so only the
+ *  drive's own spelling hits however many times it is asked. */
+function keyAddressed(probe: ToolProbe, exactKey: string): Route {
+  return (body, attempt) =>
+    sentKey({ path: probe.path, body }) === exactKey ? probe.hit(body, attempt) : probe.miss(body, attempt);
+}
+
+describe("A2 — against an index that answers the request it was actually sent", () => {
+  it.each(probes)("$name recovers the fixture key, and retries with the spelling the drive holds", async (probe) => {
+    const h = harness({
+      [probe.path]: keyAddressed(probe, DRIVE_KEY),
+      [LIST]: indexedFolder([DRIVE_KEY, `${FOLDER}notes.txt`]),
+    });
+
+    const result = await probe.tool.handler(probe.args, h.ctx);
+
+    const attempts = h.callsTo(probe.path);
+    expect(attempts).toHaveLength(2);
+    expect(sentKey(attempts[1]!)).toBe(DRIVE_KEY);
+    expect(String(sentKey(attempts[1]!))).toContain(NARROW_NO_BREAK_SPACE);
+    expect(h.callsTo(LIST)).toHaveLength(1);
+    expect(result.isError).toBeUndefined();
+    expect(result.content[0]?.text).toContain(probe.hitMarker);
+  });
+
+  it("recovers a name made entirely of non-ASCII characters", async () => {
+    const h = harness({
+      [DOWNLOAD_URL]: keyAddressed(downloadProbe, NON_ASCII_DRIVE_KEY),
+      [LIST]: indexedFolder([NON_ASCII_DRIVE_KEY, `${NON_ASCII_FOLDER}notes.txt`]),
+    });
+
+    await downloadProbe.tool.handler({ bucketName: "cloudsee-demo", filePath: NON_ASCII_TYPED_KEY }, h.ctx);
+
+    expect(h.callsTo(LIST)).toHaveLength(1);
+    expect(h.callsTo(LIST)[0]!.body.dirPath).toBe(NON_ASCII_FOLDER);
+    expect(sentKey(h.callsTo(DOWNLOAD_URL)[1]!)).toBe(NON_ASCII_DRIVE_KEY);
+  });
+
+  // Forward pin, green before and after: a keyword-less listing returns the whole folder, so the
+  // full-page guard carries more weight than it did — a folder wider than the page loses the
+  // recovery, silently, which is the safe direction to fail in.
+  it("refuses a folder that filled the page, even though the wanted name is in it", async () => {
+    const wholeFolder = [
+      DRIVE_KEY,
+      ...Array.from({ length: RESOLUTION_PAGE_SIZE - 1 }, (_unused, index) => `${FOLDER}other-${index}.png`),
+    ];
+    const h = harness({ [DOWNLOAD_URL]: keyAddressed(downloadProbe, DRIVE_KEY), [LIST]: indexedFolder(wholeFolder) });
+
+    const outcome = await outcomeOf(downloadProbe.tool, downloadProbe.args, h.ctx);
+
+    expect(outcome.isError).toBe(true);
+    expect(outcome.text).toBe(OBJECT_NOT_AVAILABLE);
+    expect(h.callsTo(DOWNLOAD_URL)).toHaveLength(1);
+  });
+
+  // Forward pin, green before and after: the wider pool a keyword-less listing returns makes this
+  // case reachable more often, and a genuinely ambiguous drive must still answer the ceiling.
+  it("stays silent when the folder holds two spellings that fold onto the wanted name", async () => {
+    const h = harness({
+      [DOWNLOAD_URL]: keyAddressed(downloadProbe, DRIVE_KEY),
+      [LIST]: indexedFolder([DRIVE_KEY, RIVAL_KEY, `${FOLDER}notes.txt`]),
+    });
+
+    const outcome = await outcomeOf(downloadProbe.tool, downloadProbe.args, h.ctx);
+
+    expect(outcome.isError).toBe(true);
+    expect(outcome.text).toBe(OBJECT_NOT_AVAILABLE);
     expect(h.callsTo(DOWNLOAD_URL)).toHaveLength(1);
   });
 });
