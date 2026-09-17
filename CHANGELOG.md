@@ -1,3 +1,10 @@
+## [3.1.1](https://github.com/webapper-services/cloudsee-drive-mcp/compare/v3.1.0...v3.1.1) (2026-09-17)
+
+
+### Bug Fixes
+
+* find a file whose name carries an invisible character ([b0ca3f4](https://github.com/webapper-services/cloudsee-drive-mcp/commit/b0ca3f47ced9e6c86398e6db6852fa88876591f6))
+
 # [3.1.0](https://github.com/webapper-services/cloudsee-drive-mcp/compare/v3.0.3...v3.1.0) (2026-09-17)
 
 
