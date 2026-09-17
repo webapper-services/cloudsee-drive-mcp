@@ -18,6 +18,9 @@ import type { Config } from "./config";
 export function createServer(config: Config, tools: ToolDef[] = allTools): McpServer {
   const client = new CloudSeeClient(config);
   const server = new McpServer({ name: "cloudsee-drive-mcp", version: VERSION });
+  // What `get_version` answers with. Assembled here because this is the only place that holds
+  // both the config and the tool set this transport actually registered.
+  const serverInfo = { baseUrl: config.baseUrl, toolCount: tools.length };
 
   for (const tool of tools) {
     server.registerTool(
@@ -30,7 +33,7 @@ export function createServer(config: Config, tools: ToolDef[] = allTools): McpSe
       },
       async (args: Record<string, unknown>) => {
         try {
-          return await tool.handler(args ?? {}, { client, defaultBucket: config.defaultBucket });
+          return await tool.handler(args ?? {}, { client, defaultBucket: config.defaultBucket, serverInfo });
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);
           logger.error(`tool "${tool.name}" failed`, message);

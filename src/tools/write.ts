@@ -4,6 +4,7 @@ import { z } from "zod";
 import { CloudSeeError } from "../errors";
 import { confirmShape, confirmationPreview } from "../confirm";
 import { formatMetadataUpdate, summarize } from "./format";
+import { foldForMatching } from "./keyResolution";
 import { mimeForFileName } from "./mime";
 import { createJob, finishJob, getJob, listJobs, recordPart, type UploadJob } from "../uploads";
 import { bucketField, normalizeFolder, resolveBucket, textResult, type ToolContext, type ToolDef } from "./types";
@@ -12,6 +13,19 @@ import { bucketField, normalizeFolder, resolveBucket, textResult, type ToolConte
 // so a denial is a scope problem on the caller's key, never a rollout gate.
 const RBAC_NOTE =
   " (Write access is authorized server-side by the public API's RBAC — a denial means the API key lacks this tool's scope, not a tool failure.)";
+
+/**
+ * CSD-586 D4. Storing the bytes and indexing them are separate steps: the finalize call
+ * registers the file and the index picks it up afterwards, so every listing tool honestly
+ * reports the file as absent for a while after a successful upload. Nothing said so, and what
+ * the response DID print was the finalize payload — an empty array, because the accumulator
+ * behind it in storage-api is never appended to — which reads as "nothing was created". Same
+ * family as the queued write tools: acceptance is not completion, and a listing is what settles
+ * it. No duration is quoted; the one measured on one drive is not a contract.
+ */
+const INDEX_DELAY_NOTE =
+  "Indexing is asynchronous, so the file does not appear in browse_folder, search_files or list_files immediately — " +
+  "confirm with a listing until it shows up, rather than reading its absence as a failed upload.";
 
 const MULTIPART_THRESHOLD = 8 * 1024 * 1024; // above this the upload is split into parts
 const PART_SIZE = 16 * 1024 * 1024; // matches the web uploader's chunk size; >= S3's 5 MiB minimum
@@ -122,10 +136,11 @@ async function notFoundError(localPath: string): Promise<CloudSeeError> {
   let hint = "";
   try {
     const siblings = await readdir(dirname(localPath) || ".");
-    // JS \s covers the Unicode space separators — U+00A0 and U+202F included, which is
-    // exactly the class that makes two names look identical without matching.
-    const norm = (s: string): string => s.replace(/\s+/g, " ").toLowerCase();
-    const close = siblings.filter((s) => norm(s) === norm(wanted) || s.toLowerCase() === wanted.toLowerCase());
+    // The same fold the drive-side key recovery matches on, so a name that resolves there is a
+    // near match here too.
+    const close = siblings.filter(
+      (s) => foldForMatching(s) === foldForMatching(wanted) || s.toLowerCase() === wanted.toLowerCase(),
+    );
     if (close.length) {
       const detail = close
         .map((s) => {
@@ -179,9 +194,8 @@ async function uploadSingle(
   const put = await fetch(uploadUrl, { method: "PUT", headers: { "Content-Type": contentType }, body: new Uint8Array(bytes) });
   if (!put.ok) throw new CloudSeeError(`Upload to storage failed (HTTP ${put.status}).`, { status: put.status, code: "upload_failed" });
 
-  let complete: unknown;
   try {
-    complete = await client.post("/storage/upload/complete", {
+    await client.post("/storage/upload/complete", {
       bucketName,
       dirPath: a.destinationFolder,
       objects: [{ fileName, key, contentType, size }],
@@ -193,7 +207,10 @@ async function uploadSingle(
       { code: "finalize_failed" },
     );
   }
-  return `Uploaded "${fileName}" (${size} bytes) to "${a.destinationFolder || "/"}".\n\n${summarize(complete)}`;
+  return (
+    `Uploaded "${fileName}" (${size} bytes) to "${a.destinationFolder || "/"}". The bytes are stored.\n\n` +
+    INDEX_DELAY_NOTE
+  );
 }
 
 // Multipart path for files larger than MULTIPART_THRESHOLD. The API returns a
@@ -291,9 +308,8 @@ async function uploadMultipart(
     });
     assembled = true;
 
-    let registered: unknown;
     try {
-      registered = await client.post("/storage/upload/complete", {
+      await client.post("/storage/upload/complete", {
         bucketName,
         dirPath: a.destinationFolder,
         objects: [{ fileName, key: `${a.destinationFolder}${fileName}`, contentType, size }],
@@ -305,7 +321,10 @@ async function uploadMultipart(
         { code: "finalize_failed" },
       );
     }
-    return `Uploaded "${fileName}" (${size} bytes, ${numParts} parts) to "${a.destinationFolder || "/"}".\n\n${summarize(registered)}`;
+    return (
+      `Uploaded "${fileName}" (${size} bytes, ${numParts} parts) to "${a.destinationFolder || "/"}". ` +
+      `The bytes are stored.\n\n${INDEX_DELAY_NOTE}`
+    );
   } catch (err) {
     // Best-effort abort: an empty parts list tells the server to abort the multipart upload.
     // Skipped once the parts are assembled — there is no longer an in-flight upload to abort,
@@ -327,7 +346,7 @@ const uploadFileLocal: ToolDef = {
   name: "upload_file",
   title: "Upload file",
   description:
-    "Upload a file into a folder of a drive. The file is read from the machine running this server — which, over this connection, is your own machine — so pass its path. Requires the drive (bucketName). Files up to 8 MiB are sent in one piece; larger ones are split into parts automatically. If the name is already taken, a timestamped name is used instead, so an existing file is never overwritten." +
+    "Upload a file into a folder of a drive. The file is read from the machine running this server — which, over this connection, is your own machine — so pass its path. Requires the drive (bucketName). Files up to 8 MiB are sent in one piece; larger ones are split into parts automatically. If the name is already taken, a timestamped name is used instead, so an existing file is never overwritten. Indexing is asynchronous, so a file that uploaded successfully is still absent from browse_folder / search_files / list_files for a while afterwards — keep listing until it appears instead of uploading it again." +
     RBAC_NOTE,
   endpoint: { method: "POST", path: "/storage/upload/url", scopes: ["drive:write"] },
   inputSchema: uploadSchema.shape,
@@ -391,7 +410,7 @@ const uploadFileLocal: ToolDef = {
         `  into      ${bucketName}:${a.destinationFolder || "/"}\n` +
         `  parts     ${totalParts} x ${formatBytes(PART_SIZE)}, ${PART_CONCURRENCY} at a time\n\n` +
         `Check on it with upload_status (id "${job.id}"). The file appears in the drive only once ` +
-        `it reports "completed" — do not report it as uploaded before then.${note}`,
+        `it reports "completed" — do not report it as uploaded before then. ${INDEX_DELAY_NOTE}${note}`,
     );
   },
 };
@@ -536,7 +555,7 @@ const uploadFileInline: ToolDef = {
   name: "upload_file",
   title: "Upload file",
   description:
-    "Upload a file into a folder of a drive by passing its contents — text as-is, or binary as base64. Requires the drive (bucketName). The whole file travels in this request, so it suits documents and other modest files; anything larger than a few hundred kilobytes should go through the CloudSee web app instead. If the name is already taken, a timestamped name is used, so an existing file is never overwritten." +
+    "Upload a file into a folder of a drive by passing its contents — text as-is, or binary as base64. Requires the drive (bucketName). The whole file travels in this request, so it suits documents and other modest files; anything larger than a few hundred kilobytes should go through the CloudSee web app instead. If the name is already taken, a timestamped name is used, so an existing file is never overwritten. Indexing is asynchronous, so a file that uploaded successfully is still absent from browse_folder / search_files / list_files for a while afterwards — keep listing until it appears instead of uploading it again." +
     RBAC_NOTE,
   endpoint: { method: "POST", path: "/storage/upload/url", scopes: ["drive:write"] },
   inputSchema: uploadInlineSchema.shape,
@@ -571,9 +590,8 @@ const uploadFileInline: ToolDef = {
       throw new CloudSeeError(`Upload to storage failed (HTTP ${put.status}).`, { status: put.status, code: "upload_failed" });
     }
 
-    let complete: unknown;
     try {
-      complete = await client.post("/storage/upload/complete", {
+      await client.post("/storage/upload/complete", {
         bucketName,
         dirPath,
         objects: [{ fileName, key: objectKey, contentType, size: bytes.byteLength }],
@@ -588,7 +606,8 @@ const uploadFileInline: ToolDef = {
 
     const note = renamed ? ` (renamed from "${a.fileName}" — that name was taken)` : "";
     return textResult(
-      `Uploaded "${fileName}" (${bytes.byteLength} bytes, ${contentType}) to "${a.destinationFolder || "/"}"${note}.\n\n${summarize(complete)}`,
+      `Uploaded "${fileName}" (${bytes.byteLength} bytes, ${contentType}) to "${a.destinationFolder || "/"}"${note}. ` +
+        `The bytes are stored.\n\n${INDEX_DELAY_NOTE}`,
     );
   },
 };
@@ -708,7 +727,7 @@ const renameFile: ToolDef = {
   name: "rename_file",
   title: "Rename file or folder",
   description:
-    "Rename a file or folder in a drive, addressed by its exact object key plus its storage id (the StorageId field from search_files / browse_folder / get_file_metadata — not from list_files or recent_files, whose ids are a different id space and will NOT work). Queued: returns a RequestId and the rename completes in the background, typically under 2 minutes — verify by listing until the new name appears. Requires the drive (bucketName). Destructive (changes the object's key). Requires confirm=true." +
+    "Rename a file or folder in a drive, addressed by its exact object key plus its storage id (the StorageId field from search_files / browse_folder / get_file_metadata — not from list_files or recent_files, whose ids are a different id space and will NOT work). Queued: returns a RequestId and the rename completes in the background, typically under 2 minutes — verify by listing until the new name appears. The StorageId goes stale while the rename is in flight, and StorageId is what delete_files and move_file require, so re-read it from a listing once the new name appears rather than reusing the one you renamed with. Requires the drive (bucketName). Destructive (changes the object's key). Requires confirm=true." +
     RBAC_NOTE,
   endpoint: { method: "POST", path: "/storage/object/rename-request", scopes: ["drive:write"] },
   inputSchema: renameSchema.shape,

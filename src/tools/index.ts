@@ -1,6 +1,7 @@
 import type { ToolDef } from "./types";
 import { readTools } from "./read";
 import { downloadTools } from "./download";
+import { metaTools } from "./meta";
 import { writeTools, writeToolsHosted } from "./write";
 
 /**
@@ -8,7 +9,7 @@ import { writeTools, writeToolsHosted } from "./write";
  * are callable end-to-end; write/delete tools require the matching scope on the API key
  * (the gateway RBAC is live).
  */
-export const allTools: ToolDef[] = [...readTools, ...downloadTools, ...writeTools];
+export const allTools: ToolDef[] = [...readTools, ...downloadTools, ...writeTools, ...metaTools];
 
 /**
  * The tool set for the **hosted** transport (Lambda / the local HTTP dev server).
@@ -21,6 +22,6 @@ export const allTools: ToolDef[] = [...readTools, ...downloadTools, ...writeTool
  * `Host not in allowlist: <bucket>.s3.amazonaws.com`. So the hosted variant carries the
  * bytes in the tool call and this server performs the PUT.
  */
-export const hostedTools: ToolDef[] = [...readTools, ...downloadTools, ...writeToolsHosted];
+export const hostedTools: ToolDef[] = [...readTools, ...downloadTools, ...writeToolsHosted, ...metaTools];
 
 export type { ToolDef } from "./types";

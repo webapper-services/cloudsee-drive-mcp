@@ -51,7 +51,7 @@ describe("tool ↔ contract drift", () => {
     const names = new Set(allTools.map((t) => t.name));
     expect(names.has("restore_archived_file")).toBe(true);
     expect(names.has("list_files")).toBe(true);
-    expect(allTools.length).toBe(18);
+    expect(allTools.length).toBe(19);
   });
 
   it("every tool name is unique", () => {

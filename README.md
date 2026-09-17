@@ -81,6 +81,10 @@ npm install -g @webapper/cloudsee-drive-mcp
 
 A global install does not update itself — re-run that command to move to a newer release.
 
+Pinning or upgrading the npm version pins the **server**; a client keeps the tool list it fetched
+when it connected, so remove and re-add (or restart) the connector after an upgrade, and ask
+`get_version` what is actually running before reporting on a tool's behaviour.
+
 Or let `npx` fetch the package for you, as in the [Quickstart](#quickstart-5-minutes) above;
 the `@latest` suffix used there is what makes npm resolve the published version rather than a
 global install that happens to be on PATH.

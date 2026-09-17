@@ -94,6 +94,7 @@
     { "name": "duplicate_file", "description": "Create a copy of a file in the same location" },
     { "name": "delete_files", "description": "Permanently delete files or folders (asks for confirmation)" },
     { "name": "update_metadata", "description": "Update a file's category, description, project and tags, keeping by default anything you do not send — send a field as \"\" to clear it, tags: [] to clear every tag, or mode \"replace\" to overwrite the whole state (asks for confirmation; rewrites the object in place, changing its ETag and LastModified; not available for objects larger than 8 GiB)" },
-    { "name": "restore_archived_file", "description": "Begin restoring an archived Glacier object so it can be downloaded (asks for confirmation)" }
+    { "name": "restore_archived_file", "description": "Begin restoring an archived Glacier object so it can be downloaded (asks for confirmation)" },
+    { "name": "get_version", "description": "Report this connector's version, its tool count and the CloudSee API host it is configured against" }
   ]
 }

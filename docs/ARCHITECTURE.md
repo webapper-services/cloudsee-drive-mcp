@@ -56,7 +56,7 @@ Everything blue above is in this repo; the API is the one thing it doesn't own.
    registers the secret for redaction **before anything else can log**.
 3. **`createServer(config, tools)`** ([`src/server.ts`](../src/server.ts)) — constructs one
    `CloudSeeClient`, one `McpServer`, and registers the tool set it is handed (next section).
-   `allTools` (stdio) holds 18; `hostedTools` holds 17 — the shared names differ only in the
+   `allTools` (stdio) holds 19; `hostedTools` holds 18 — the shared names differ only in the
    `upload_file` variant, and `upload_status` is stdio-only because only stdio starts background uploads
    ([`src/tools/index.ts`](../src/tools/index.ts)).
 4. **`new StdioServerTransport()`** + **`server.connect(transport)`** — the SDK calls
@@ -442,7 +442,7 @@ for the next page.
 
 ## Appendix A — tool → endpoint reference
 
-18 tools over stdio (17 hosted — upload_status reports on background uploads, which only stdio starts),
+19 tools over stdio (18 hosted — upload_status reports on background uploads, which only stdio starts),
 all callable end-to-end — the gateway's RBAC/scope wiring is live, so a
 denial means the API key lacks the tool's scope. "Queued" = the POST enqueues the operation
 and returns a `RequestId`; it completes in the background, typically within 1–2 minutes.
@@ -466,6 +466,7 @@ and returns a `RequestId`; it completes in the background, typically within 1–
 | `update_metadata` | `/storage/object/metadata` | `drive:write` | live · **confirm** |
 | `delete_files` | `/storage/objects/delete-request` (one per object) | `drive:delete` | live — queued · **confirm** |
 | `restore_archived_file` | `/storage/object/restore` | `drive:write` | live · **confirm** (Glacier) |
+| `get_version` | `/storage/drives` (declared only — the tool makes no call) | `drive:read` | local — version, tool count and the configured API **host**; never the key id or secret |
 
 Every endpoint is real and reachable; `/v1/api-keys/*` (the dashboard-JWT management plane) is
 intentionally **not** wrapped. The contract-drift test (`test/contract/drift.test.ts`) fails the
@@ -479,7 +480,7 @@ build if any tool's path/scope drifts from [`contract/registry.snapshot.json`](.
 | Tool registration + handler wrapper | [`src/server.ts`](../src/server.ts) |
 | Config + env validation | [`src/config.ts`](../src/config.ts) |
 | stderr-only logger + redaction | [`src/logger.ts`](../src/logger.ts) |
-| Tool definitions (schema · annotations · handler) | [`src/tools/read.ts`](../src/tools/read.ts), [`download.ts`](../src/tools/download.ts), [`write.ts`](../src/tools/write.ts) |
+| Tool definitions (schema · annotations · handler) | [`src/tools/read.ts`](../src/tools/read.ts), [`download.ts`](../src/tools/download.ts), [`write.ts`](../src/tools/write.ts), [`meta.ts`](../src/tools/meta.ts) |
 | Two-step confirm | [`src/confirm.ts`](../src/confirm.ts) |
 | Result shaping / output bounding | [`src/tools/format.ts`](../src/tools/format.ts) |
 | Drive resolution + tool types | [`src/tools/types.ts`](../src/tools/types.ts) |

@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { readPageSizeHint, withPageSizeHint } from "../client/pagination";
 import { FIRST_PAGE_ITEMS, recommendedPageSize, summarize, summarizeListing, withCursor } from "./format";
+import { callWithKeyRecovery, objectNotAvailableResult } from "./keyResolution";
 import { bucketField, normalizeFolder, resolveBucket, textResult, type ToolDef } from "./types";
 
 /** The largest page any listing tool exposes — the bound in every listing schema below, and the
@@ -238,16 +239,6 @@ const recentFiles: ToolDef = {
 
 // ---- get_file_metadata → POST /storage/object/detail (storageDetail, drive:read) ----
 
-/**
- * The information ceiling CSD-638 set for an object the caller cannot be shown: absence and
- * access denial answer with the SAME sentence, so the pair cannot be used to probe for
- * objects in accounts the credential cannot reach. Copied verbatim from the server's own
- * wording (storage-api PublicApiErrorClassifier) so `get_file_metadata` and `get_file_tags`
- * answer identically for the same missing object — the tagging endpoint throws and reaches
- * the classifier, while `/storage/object/detail` swallows the miss and answers `null`.
- */
-const OBJECT_NOT_AVAILABLE = "The specified object does not exist or is not available to your credential.";
-
 /** `/storage/object/detail` answers `success:true, data:null` for an object it cannot resolve
  *  (StorageService.#getIndexedObjectDetail and ObjectRepository.getObject both swallow), and an
  *  endpoint that returns an empty payload is indistinguishable from it on the wire. */
@@ -272,13 +263,18 @@ const getFileMetadata: ToolDef = {
   handler: async (args, { client, defaultBucket }) => {
     const a = metaSchema.parse(args);
     const bucketName = resolveBucket(a.bucketName, defaultBucket);
-    const data = await client.post("/storage/object/detail", { bucketName, objectKey: a.objectKey });
-    if (isEmptyDetail(data)) {
-      const result = textResult(OBJECT_NOT_AVAILABLE);
-      result.isError = true;
-      return result;
-    }
-    return textResult(summarize(data));
+    // A key whose invisible characters did not survive the trip is retried once against the
+    // spelling the index holds (CSD-586 A2); a key no spelling reaches answers the ceiling
+    // sentence, exactly as an object the credential may not read does.
+    const outcome = await callWithKeyRecovery(
+      client,
+      bucketName,
+      a.objectKey,
+      (objectKey) => client.post("/storage/object/detail", { bucketName, objectKey }),
+      isEmptyDetail,
+    );
+    if (!outcome.resolved) return objectNotAvailableResult();
+    return textResult(summarize(outcome.value));
   },
 };
 

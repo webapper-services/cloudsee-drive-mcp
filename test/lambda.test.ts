@@ -77,7 +77,7 @@ describe("lambda handler (stateless MCP over API Gateway)", () => {
     );
     expect(res.statusCode).toBe(200);
     const parsed = JSON.parse(res.body) as { result?: { tools?: unknown[] } };
-    expect(parsed.result?.tools?.length).toBe(17);
+    expect(parsed.result?.tools?.length).toBe(18);
   });
 
   it("CORS preflight", async () => {

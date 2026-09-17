@@ -2,10 +2,22 @@ import { z, type ZodRawShape } from "zod";
 import type { CloudSeeClient } from "../client/CloudSeeClient";
 import { CloudSeeError } from "../errors";
 
+/** What `get_version` reports about the process answering the call — the version, how many
+ *  tools this transport registered, and which API host the credential is pointed at. No
+ *  credential material: the key id and secret are not part of this shape. */
+export interface ServerInfo {
+  baseUrl: string;
+  toolCount: number;
+}
+
 export interface ToolContext {
   client: CloudSeeClient;
   /** Optional configured default drive (CLOUDSEE_DEFAULT_BUCKET); never hardcoded. */
   defaultBucket?: string;
+  /** Filled in by `createServer`, which is the only place that knows both the config and the
+   *  registered tool set. Optional so every other tool — and a test that builds a context by
+   *  hand — is unaffected by it. */
+  serverInfo?: ServerInfo;
 }
 
 /** Reusable Zod field for the drive/bucket selector. Optional in the schema so a

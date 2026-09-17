@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { summarize } from "./format";
+import { callWithKeyRecovery, objectNotAvailableResult } from "./keyResolution";
 import { bucketField, resolveBucket, textResult, type ToolDef } from "./types";
 
 // download_file wraps POST /storage/object/download-url (getObjectUrl, drive:read +
@@ -26,13 +27,20 @@ const downloadFile: ToolDef = {
   handler: async (args, { client, defaultBucket }) => {
     const a = downloadSchema.parse(args);
     const bucketName = resolveBucket(a.bucketName, defaultBucket);
-    const data = await client.post("/storage/object/download-url", {
-      bucketName,
-      filePath: a.filePath,
-      download: a.forceDownload ?? false,
-      storageId: a.storageId,
-    });
-    return textResult(summarize(data));
+    // A key whose invisible characters did not survive the trip is retried once against the
+    // spelling the index holds (CSD-586 A2). A key no spelling reaches answers the CSD-638
+    // ceiling sentence rather than the server's own wording, which names the object's absence
+    // and so would tell an absent object apart from an unreadable one.
+    const outcome = await callWithKeyRecovery(client, bucketName, a.filePath, (filePath) =>
+      client.post("/storage/object/download-url", {
+        bucketName,
+        filePath,
+        download: a.forceDownload ?? false,
+        storageId: a.storageId,
+      }),
+    );
+    if (!outcome.resolved) return objectNotAvailableResult();
+    return textResult(summarize(outcome.value));
   },
 };
 
@@ -79,14 +87,18 @@ const shareLink: ToolDef = {
   handler: async (args, { client, defaultBucket }) => {
     const a = shareSchema.parse(args);
     const bucketName = resolveBucket(a.bucketName, defaultBucket);
-    const data = await client.post("/shares/link/create", {
-      bucketName,
-      targetType: "object",
-      filePath: a.filePath,
-      ...(a.expireTime !== undefined ? { expireTime: a.expireTime } : {}),
-      storageId: a.storageId,
-    });
-    return textResult(summarize(shareView(data)));
+    // Same key recovery, and the same ceiling sentence, as download_file (CSD-586 A2).
+    const outcome = await callWithKeyRecovery(client, bucketName, a.filePath, (filePath) =>
+      client.post("/shares/link/create", {
+        bucketName,
+        targetType: "object",
+        filePath,
+        ...(a.expireTime !== undefined ? { expireTime: a.expireTime } : {}),
+        storageId: a.storageId,
+      }),
+    );
+    if (!outcome.resolved) return objectNotAvailableResult();
+    return textResult(summarize(shareView(outcome.value)));
   },
 };
 
