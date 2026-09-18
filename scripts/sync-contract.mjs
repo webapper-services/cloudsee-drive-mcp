@@ -128,6 +128,15 @@ function main() {
       "generated OpenAPI. This snapshot is pinned to the PRODUCTION surface: the seeded set is stage-dependent, " +
       "so UAT publishes one endpoint fewer — `POST /storage/buckets` is retired there but still served on " +
       "production for the length of its deprecation window. " +
+      // CSD-586: the 32-vs-33 delta against the live document was re-raised as a defect. The answer
+      // belongs in the generated artefact, not in a commit message, or the next reviewer re-raises it.
+      "`POST /auth/verify` is absent by construction, not by omission: it has no registry row at all — " +
+      "drive-bridge dispatches it inline before the registry is consulted, and its gateway route is " +
+      "deliberately exempt from the usage-plan key so a brand-new credential can be checked before " +
+      "anything else is wired up (CSD-639) — so the generator, whose only source is the seed, cannot " +
+      "emit it. It is published statically in the live OpenAPI document, which is why the live endpoint " +
+      "count is one higher than `endpointCount` here; that delta is expected and is allow-listed by " +
+      "`test/contract/live-openapi.test.ts` (CSD-586). " +
       "Do not edit by hand — run `npm run sync:contract`.",
     plane: "data",
     source: "CloudSee Drive public API registry (seed-api-registry.js)",
