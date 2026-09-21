@@ -16,9 +16,12 @@ import type { ToolDef, ToolResult } from "../../src/tools/types";
 // caller must see the same sentence an object it may not read would produce. A message that
 // varied with the content of a key would make the pair an existence oracle.
 
-/** Verbatim from storage-api's PublicApiErrorClassifier — the one sentence all three
- *  path-addressed tools answer for a key they cannot resolve. */
-const OBJECT_NOT_AVAILABLE = "The specified object does not exist or is not available to your credential.";
+/** An independent copy of the connector's own sentence (CSD-670 D2 reworded it away from the
+ *  server's) — the one answer every path-addressed tool gives for a key it cannot resolve. */
+const OBJECT_NOT_AVAILABLE =
+  "Could not resolve this object key. Either no object with this key exists, or your credential cannot read it. " +
+  "Copy the key exactly as a listing tool returned it — a file name can carry invisible characters that must be " +
+  "sent byte-for-byte.";
 
 const NARROW_NO_BREAK_SPACE = " ";
 const NO_BREAK_SPACE = " ";
@@ -33,8 +36,11 @@ const TYPED_KEY = `${FOLDER}${BASENAME} PM.png`;
 const RIVAL_KEY = `${FOLDER}${BASENAME}${NO_BREAK_SPACE}PM.png`;
 
 const DETAIL = "/storage/object/detail";
+const TAGGING = "/storage/object/tagging";
 const DOWNLOAD_URL = "/storage/object/download-url";
 const SHARE_CREATE = "/shares/link/create";
+const DUPLICATE = "/storage/object/duplicate";
+const RESTORE = "/storage/object/restore";
 const LIST = "/storage/list";
 
 /** The page size the resolution lookup asks for; a page that comes back this full is ambiguous.
@@ -46,8 +52,11 @@ const SERVER_FAULT = "CloudSee API error for /storage/object/download-url: Inter
 
 const byName = Object.fromEntries(allTools.map((tool) => [tool.name, tool]));
 const getFileMetadata = byName["get_file_metadata"]!;
+const getFileTags = byName["get_file_tags"]!;
 const downloadFile = byName["download_file"]!;
 const shareLink = byName["share_link"]!;
+const duplicateFile = byName["duplicate_file"]!;
+const restoreArchivedFile = byName["restore_archived_file"]!;
 
 interface RecordedCall {
   path: string;
@@ -139,6 +148,24 @@ const probes: ToolProbe[] = [
     hitMarker: "image/png",
   },
   {
+    // CSD-670. The tagging miss arrives as HTTP 200 + success:false — drive-bridge serves the
+    // ActionResult as 200 and PublicApiErrorClassifier authors the sentence — so CloudSeeClient
+    // throws a plain CloudSeeError with status 200, NOT an AuthError. That is what lets
+    // `worthResolving` accept it, and it is the shape the fix depends on.
+    name: "get_file_tags",
+    tool: getFileTags,
+    path: TAGGING,
+    args: { bucketName: "cloudsee-demo", objectKey: TYPED_KEY },
+    miss: () => {
+      throw new CloudSeeError("The specified object does not exist or is not available to your credential.", {
+        status: 200,
+        code: "404",
+      });
+    },
+    hit: () => ({ TagSet: [{ Key: "Status", Value: "Verified" }] }),
+    hitMarker: "Verified",
+  },
+  {
     name: "download_file",
     tool: downloadFile,
     path: DOWNLOAD_URL,
@@ -160,15 +187,48 @@ const probes: ToolProbe[] = [
     hit: () => ({ shareableLink: "https://drive.cloudsee.cloud/share/2f9c1d7e", shareId: "2f9c1d7e" }),
     hitMarker: "https://drive.cloudsee.cloud/share/2f9c1d7e",
   },
+  {
+    // CSD-670 §4.2a. A single non-queued call carrying one objectKey — the same shape as
+    // download_file, so the same recovery applies.
+    name: "duplicate_file",
+    tool: duplicateFile,
+    path: DUPLICATE,
+    args: { bucketName: "cloudsee-demo", objectKey: TYPED_KEY },
+    miss: () => {
+      throw new CloudSeeError("File doesn't exist on S3.", { status: 404, code: "not_found" });
+    },
+    hit: () => ({ ...indexedItem(`${FOLDER}${BASENAME}${NARROW_NO_BREAK_SPACE}PM copy.png`), StorageId: "os-2" }),
+    hitMarker: "os-2",
+  },
+  {
+    // CSD-670 §4.2a. `confirm: true` is required: without it the handler answers a confirmation
+    // preview and posts nothing at all, which would make every probe pass for the wrong reason.
+    name: "restore_archived_file",
+    tool: restoreArchivedFile,
+    path: RESTORE,
+    args: { bucketName: "cloudsee-demo", objectKey: TYPED_KEY, confirm: true },
+    miss: () => {
+      throw new CloudSeeError("File doesn't exist on S3.", { status: 404, code: "not_found" });
+    },
+    hit: () => ({ RestoreStatus: "in-progress", RetrievalTier: "Standard" }),
+    hitMarker: "in-progress",
+  },
 ];
+
+/** The endpoints that carry the caller's key in `filePath`; every other key-addressed endpoint
+ *  here uses `objectKey`. */
+const FILE_PATH_ENDPOINTS = new Set([DOWNLOAD_URL, SHARE_CREATE]);
 
 /** The key each tool put on the wire on its Nth attempt — the field name differs per endpoint. */
 function sentKey(call: RecordedCall): unknown {
-  return call.path === DETAIL ? call.body.objectKey : call.body.filePath;
+  return FILE_PATH_ENDPOINTS.has(call.path) ? call.body.filePath : call.body.objectKey;
 }
 
+const tagsProbe = probes.find((probe) => probe.name === "get_file_tags")!;
 const downloadProbe = probes.find((probe) => probe.name === "download_file")!;
 const shareProbe = probes.find((probe) => probe.name === "share_link")!;
+const duplicateProbe = probes.find((probe) => probe.name === "duplicate_file")!;
+const restoreProbe = probes.find((probe) => probe.name === "restore_archived_file")!;
 
 describe("A2 — a key whose invisible character did not survive the trip is retried once", () => {
   it.each(probes)("$name retries with the byte-exact key the index holds, and succeeds", async (probe) => {
@@ -212,6 +272,21 @@ describe("A2 — a key whose invisible character did not survive the trip is ret
     expect(h.callsTo(probe.path)).toHaveLength(1);
     expect(h.callsTo(LIST)).toHaveLength(0);
     expect(result.isError).toBeUndefined();
+  });
+
+  // CSD-670 §4.1. get_file_tags must NOT pass an `isMiss` to the recovery: /storage/object/tagging
+  // throws for an object it cannot resolve, so an empty TagSet is a legitimate answer about a file
+  // that exists. Reading that emptiness as an absence would deny an untagged object and spend an
+  // index lookup doing it.
+  it("an object that simply has no tags is an answer, not an absence", async () => {
+    const h = harness({ [TAGGING]: () => ({ TagSet: [] }), [LIST]: () => ({ items: [] }) });
+
+    const result = await getFileTags.handler({ bucketName: "cloudsee-demo", objectKey: "docs/a.txt" }, h.ctx);
+
+    expect(result.isError).toBeUndefined();
+    expect(result.content[0]?.text).toContain("TagSet");
+    expect(h.callsTo(TAGGING)).toHaveLength(1);
+    expect(h.callsTo(LIST)).toHaveLength(0);
   });
 });
 
@@ -262,6 +337,41 @@ describe("A2 — an unresolvable key answers the CSD-638 ceiling sentence, from 
 
     expect(h.callsTo(DOWNLOAD_URL)).toHaveLength(1);
   });
+
+  // CSD-670 §4.2a. duplicate_file writes: a second call under another spelling would leave the
+  // caller with two copies of a file they asked to duplicate once.
+  it("duplicate_file issues exactly ONE duplicate when the key cannot be resolved", async () => {
+    const h = harness({ [DUPLICATE]: duplicateProbe.miss, [LIST]: () => ({ items: [] }) });
+
+    await outcomeOf(duplicateProbe.tool, duplicateProbe.args, h.ctx);
+
+    expect(h.callsTo(DUPLICATE)).toHaveLength(1);
+  });
+
+  // A Glacier retrieval is billed per request, so a second restore under another spelling costs
+  // the caller money for an object they never reached.
+  it("restore_archived_file issues exactly ONE restore when the key cannot be resolved", async () => {
+    const h = harness({ [RESTORE]: restoreProbe.miss, [LIST]: () => ({ items: [] }) });
+
+    await outcomeOf(restoreProbe.tool, restoreProbe.args, h.ctx);
+
+    expect(h.callsTo(RESTORE)).toHaveLength(1);
+  });
+
+  // And when it IS resolved: the retry is the second and last call — duplicate_file must not
+  // create two copies, restore_archived_file must not issue two Glacier retrievals.
+  it.each([duplicateProbe, restoreProbe])(
+    "$name issues exactly TWO calls when the recovery succeeds — the miss and the retry",
+    async (probe) => {
+      const h = harness({ [probe.path]: keyAddressed(probe, DRIVE_KEY), [LIST]: indexedFolder([DRIVE_KEY]) });
+
+      const result = await probe.tool.handler(probe.args, h.ctx);
+
+      expect(h.callsTo(probe.path)).toHaveLength(2);
+      expect(sentKey(h.callsTo(probe.path)[1]!)).toBe(DRIVE_KEY);
+      expect(result.isError).toBeUndefined();
+    },
+  );
 
   // The ceiling is the point: the answer may not carry anything that distinguishes "absent" from
   // "you may not read it", and it may not describe the key the caller asked about.
@@ -509,6 +619,22 @@ describe("A2 — against an index that answers the request it was actually sent"
     expect(h.callsTo(LIST)).toHaveLength(1);
     expect(result.isError).toBeUndefined();
     expect(result.content[0]?.text).toContain(probe.hitMarker);
+  });
+
+  // The ticket verbatim: the reporter's own call, against an index that answers byte-exactly.
+  it("CSD-670 — get_file_tags returns the tags for a key whose U+202F arrived as a plain space", async () => {
+    const h = harness({
+      [TAGGING]: keyAddressed(tagsProbe, DRIVE_KEY),
+      [LIST]: indexedFolder([DRIVE_KEY, `${FOLDER}control.txt`]),
+    });
+
+    const result = await getFileTags.handler({ bucketName: "cloudsee-demo", objectKey: TYPED_KEY }, h.ctx);
+
+    expect(result.isError).toBeUndefined();
+    expect(result.content[0]?.text).toContain("Verified");
+    expect(h.callsTo(TAGGING)).toHaveLength(2);
+    expect(sentKey(h.callsTo(TAGGING)[1]!)).toBe(DRIVE_KEY);
+    expect(String(sentKey(h.callsTo(TAGGING)[1]!))).toContain(NARROW_NO_BREAK_SPACE);
   });
 
   it("recovers a name made entirely of non-ASCII characters", async () => {

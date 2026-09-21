@@ -4,7 +4,7 @@ import { z } from "zod";
 import { CloudSeeError } from "../errors";
 import { confirmShape, confirmationPreview } from "../confirm";
 import { formatMetadataUpdate, summarize } from "./format";
-import { foldForMatching } from "./keyResolution";
+import { callWithKeyRecovery, foldForMatching, objectNotAvailableResult } from "./keyResolution";
 import { mimeForFileName } from "./mime";
 import { createJob, finishJob, getJob, listJobs, recordPart, type UploadJob } from "../uploads";
 import { bucketField, normalizeFolder, resolveBucket, textResult, type ToolContext, type ToolDef } from "./types";
@@ -812,8 +812,14 @@ const duplicateFile: ToolDef = {
   handler: async (args, { client, defaultBucket }) => {
     const a = duplicateSchema.parse(args);
     const bucketName = resolveBucket(a.bucketName, defaultBucket);
-    const data = await client.post("/storage/object/duplicate", { bucketName, objectKey: a.objectKey, storageId: a.storageId });
-    return textResult(`Duplicated "${a.objectKey}".\n\n${summarize(data)}`);
+    // Same key recovery as download_file (CSD-586 A2, extended to this tool by CSD-670). The
+    // retry is safe on a write because `worthResolving` has already excluded auth failures,
+    // retryable transport failures and 5xx — so the first call demonstrably did nothing.
+    const outcome = await callWithKeyRecovery(client, bucketName, a.objectKey, (objectKey) =>
+      client.post("/storage/object/duplicate", { bucketName, objectKey, storageId: a.storageId }),
+    );
+    if (!outcome.resolved) return objectNotAvailableResult();
+    return textResult(`Duplicated "${a.objectKey}".\n\n${summarize(outcome.value)}`);
   },
 };
 
@@ -1022,14 +1028,18 @@ const restoreArchivedFile: ToolDef = {
         `Drive: ${bucketName}\nTier: ${a.retrievalTier ?? "Standard"}${a.days ? `, ${a.days} day(s)` : ""}. May incur retrieval cost.`,
       );
     }
-    const data = await client.post("/storage/object/restore", {
-      bucketName,
-      objectKey: a.objectKey,
-      days: a.days,
-      retrievalTier: a.retrievalTier,
-      storageId: a.storageId,
-    });
-    return textResult(`Restore initiated for "${a.objectKey}".\n\n${summarize(data)}`);
+    // Same key recovery as duplicate_file above (CSD-670).
+    const outcome = await callWithKeyRecovery(client, bucketName, a.objectKey, (objectKey) =>
+      client.post("/storage/object/restore", {
+        bucketName,
+        objectKey,
+        days: a.days,
+        retrievalTier: a.retrievalTier,
+        storageId: a.storageId,
+      }),
+    );
+    if (!outcome.resolved) return objectNotAvailableResult();
+    return textResult(`Restore initiated for "${a.objectKey}".\n\n${summarize(outcome.value)}`);
   },
 };
 

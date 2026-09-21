@@ -9,8 +9,12 @@ import type { CloudSeeClient } from "../../src/client/CloudSeeClient";
 // while `get_file_tags` on the SAME key answered the CSD-638 ceiling sentence because its
 // endpoint throws and reaches the server's classifier. The two probes now agree.
 
-/** Verbatim from storage-api's PublicApiErrorClassifier — the wording both probes must share. */
-const OBJECT_NOT_AVAILABLE = "The specified object does not exist or is not available to your credential.";
+/** An independent copy of the connector's own sentence (CSD-670 D2 reworded it away from the
+ *  server's) — the wording both probes must share. */
+const OBJECT_NOT_AVAILABLE =
+  "Could not resolve this object key. Either no object with this key exists, or your credential cannot read it. " +
+  "Copy the key exactly as a listing tool returned it — a file name can carry invisible characters that must be " +
+  "sent byte-for-byte.";
 
 const byName = Object.fromEntries(allTools.map((tool) => [tool.name, tool]));
 const getFileMetadata = byName["get_file_metadata"]!;

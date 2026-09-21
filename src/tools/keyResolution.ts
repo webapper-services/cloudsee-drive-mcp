@@ -18,15 +18,25 @@ import { textResult, type ToolResult } from "./types";
 /**
  * The information ceiling CSD-638 set for an object the caller cannot be shown: absence and
  * access denial answer with the SAME sentence, so the pair cannot be used to probe for objects
- * in accounts the credential cannot reach. Copied verbatim from the server's own wording
- * (storage-api PublicApiErrorClassifier) so `get_file_metadata` and `get_file_tags` answer
- * identically for the same missing object — the tagging endpoint throws and reaches the
- * classifier, while `/storage/object/detail` swallows the miss and answers `null`.
+ * in accounts the credential cannot reach.
  *
- * It lives here because `get_file_metadata`, `download_file` and `share_link` all answer it for
- * a key the recovery below could not resolve, and one sentence means one definition.
+ * Until CSD-670 this was copied verbatim from the server's own wording (storage-api
+ * PublicApiErrorClassifier), deliberately, so both halves of a round trip read alike. It
+ * diverges now: leading with the credential sent the reporter hunting a permission fault when
+ * the real cause was an invisible character in the key, and by the time the connector answers
+ * this it has already asked the index for another spelling — advice the server cannot give.
+ * The replacement is still ONE fixed sentence, identical for absence and denial, and still says
+ * nothing about the key it was given, so the ceiling is untouched; only the advice changed. The
+ * tools that post a key without this recovery still surface the server's older wording raw, and
+ * that divergence is accepted (CSD-670 D2).
+ *
+ * It lives here because every tool that resolves a caller-supplied object key answers it for a
+ * key the recovery below could not resolve, and one sentence means one definition.
  */
-export const OBJECT_NOT_AVAILABLE = "The specified object does not exist or is not available to your credential.";
+export const OBJECT_NOT_AVAILABLE =
+  "Could not resolve this object key. Either no object with this key exists, or your credential cannot read it. " +
+  "Copy the key exactly as a listing tool returned it — a file name can carry invisible characters that must be " +
+  "sent byte-for-byte.";
 
 /** The one answer a key that could not be resolved produces, in every tool that takes a key. */
 export function objectNotAvailableResult(): ToolResult {

@@ -293,8 +293,15 @@ const getFileTags: ToolDef = {
   handler: async (args, { client, defaultBucket }) => {
     const a = tagsSchema.parse(args);
     const bucketName = resolveBucket(a.bucketName, defaultBucket);
-    const data = await client.post("/storage/object/tagging", { bucketName, objectKey: a.objectKey });
-    return textResult(summarize(data));
+    // Same key recovery as get_file_metadata (CSD-586 A2, extended here by CSD-670). No `isMiss`:
+    // the tagging endpoint THROWS for an object it cannot resolve, so a miss is already a miss by
+    // definition, while an object that simply carries no tags answers an empty tag set — reading
+    // that emptiness as an absence would deny a file that exists.
+    const outcome = await callWithKeyRecovery(client, bucketName, a.objectKey, (objectKey) =>
+      client.post("/storage/object/tagging", { bucketName, objectKey }),
+    );
+    if (!outcome.resolved) return objectNotAvailableResult();
+    return textResult(summarize(outcome.value));
   },
 };
 
