@@ -1,3 +1,10 @@
+## [3.1.3](https://github.com/webapper-services/cloudsee-drive-mcp/compare/v3.1.2...v3.1.3) (2026-09-22)
+
+
+### Bug Fixes
+
+* return the date on each recently used file ([52db5d0](https://github.com/webapper-services/cloudsee-drive-mcp/commit/52db5d011e49cf9a22f2e004eea3ed677f84558b))
+
 ## [3.1.2](https://github.com/webapper-services/cloudsee-drive-mcp/compare/v3.1.1...v3.1.2) (2026-09-21)
 
 
