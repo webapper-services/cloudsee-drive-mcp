@@ -314,6 +314,57 @@ describe("summarizeListing — the listing item projection", () => {
     expect(view.items[0]).toEqual({ Name: "a.txt", Key: "Reports/a.txt", Size: 1 });
   });
 
+  // CSD-672. `/storage/recent` rows are the one listing payload whose timestamp is not called
+  // `LastModified`, so the allow-list matched nothing and `recent_files` rendered Name/Key/StorageId
+  // with no date at all. The row below is the shape `RecentDto` puts on the wire.
+  it("publishes a /storage/recent row's UpdatedAt as LastModified", () => {
+    const recentRow = {
+      Email: "daniela@webapper.net",
+      Bucket: "csd-app-verify",
+      StorageId: 1789767981603,
+      Name: "Screenshot 2026-09-15 at 2.38.21 PM.png",
+      Parent: "App-Verify-2026-09-15/",
+      UpdatedAt: "2026-09-18T04:12:07.881Z",
+      Key: "App-Verify-2026-09-15/Screenshot 2026-09-15 at 2.38.21 PM.png",
+    };
+
+    const render = summarizeListing([recentRow]);
+    const view = JSON.parse(render.text) as { items: Record<string, unknown>[] };
+
+    expect(view.items[0]).toEqual({
+      Name: "Screenshot 2026-09-15 at 2.38.21 PM.png",
+      Key: "App-Verify-2026-09-15/Screenshot 2026-09-15 at 2.38.21 PM.png",
+      LastModified: "2026-09-18T04:12:07.881Z",
+      StorageId: 1789767981603,
+    });
+  });
+
+  // An indexed document carries both: `LastModified` is the object's own, `UpdatedAt` is the index
+  // write time. Preference order is the only way the CSD-672 alias could damage browse_folder and
+  // search_files, so the projected key list must stay exactly what the test above pins.
+  it("prefers an indexed document's own LastModified over its UpdatedAt", () => {
+    const render = summarizeListing({
+      items: [{ ...indexDocument, UpdatedAt: "2026-11-08T10:57:08.232Z" }],
+      totalItems: 1,
+    });
+    const view = JSON.parse(render.text) as { items: Record<string, unknown>[] };
+    const item = view.items[0]!;
+
+    expect(item.LastModified).toBe("2026-08-14T03:21:55.000Z");
+    expect(Object.keys(item)).toEqual([
+      "Name",
+      "Key",
+      "Size",
+      "LastModified",
+      "IsFolder",
+      "StorageId",
+      "StorageClass",
+      "Status",
+      "Project",
+    ]);
+    expect(render.text).not.toContain("UpdatedAt");
+  });
+
   it("does not leak into summarize — every non-listing tool still renders its payload whole", () => {
     const rendered = summarize(indexDocument);
     expect(rendered).toContain("ObjectUUID");

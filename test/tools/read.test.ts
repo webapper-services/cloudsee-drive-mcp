@@ -157,6 +157,51 @@ describe("recent_files pagination dialect", () => {
   });
 });
 
+// CSD-672. The endpoint sends `UpdatedAt` on every row and the listing projection dropped it, so
+// every record reached the model as Name/Key/StorageId with no date. AC1: a timestamp is present.
+// AC2: it is published under the one name the other three listing tools use.
+describe("recent_files timestamp", () => {
+  const tool = byName["recent_files"]!;
+  const recentRows = [
+    {
+      Email: "daniela@webapper.net",
+      Bucket: "csd-app-verify",
+      StorageId: 1789767981603,
+      Name: "Screenshot 2026-09-15 at 2.38.21 PM.png",
+      Parent: "App-Verify-2026-09-15/",
+      UpdatedAt: "2026-09-18T04:12:07.881Z",
+      Key: "App-Verify-2026-09-15/Screenshot 2026-09-15 at 2.38.21 PM.png",
+    },
+    {
+      Email: "daniela@webapper.net",
+      Bucket: "csd-app-verify",
+      StorageId: 1789767981604,
+      Name: "quarterly-report.pdf",
+      Parent: "Reports/",
+      UpdatedAt: "2026-09-17T22:03:41.120Z",
+      Key: "Reports/quarterly-report.pdf",
+    },
+  ];
+
+  it("returns a timestamp on every record, under the name the other listing tools use", async () => {
+    const postPaged = vi.fn().mockResolvedValue({ data: recentRows, nextCursor: undefined });
+    const res = await tool.handler({ limit: 2 }, { client: pagedClient(postPaged) });
+
+    const text = res.content[0]?.text ?? "";
+    const view = JSON.parse(text) as { items: Record<string, unknown>[] };
+
+    expect(view.items).toHaveLength(recentRows.length);
+    for (const item of view.items) {
+      expect(item.LastModified).toBeDefined();
+    }
+    expect(view.items.map((item) => item.LastModified)).toEqual([
+      "2026-09-18T04:12:07.881Z",
+      "2026-09-17T22:03:41.120Z",
+    ]);
+    expect(text).not.toContain("UpdatedAt");
+  });
+});
+
 // CSD-667 T4. Asking for 200 used to render 3 items and hand back a cursor that skipped 197.
 // The FIRST call of a walk has measured nothing yet, so it sends the `FIRST_PAGE_ITEMS` seed:
 // the caller receives all 200 across truthful calls instead of 3 and a lie.

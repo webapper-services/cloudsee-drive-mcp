@@ -49,6 +49,21 @@ function descriptiveItem(index: number): Record<string, unknown> {
   };
 }
 
+/** A `/storage/recent` row as `RecentDto` puts it on the wire: its recency timestamp is called
+ *  `UpdatedAt`, and the row carries no `LastModified` of its own (CSD-672). */
+function recentItem(index: number): Record<string, unknown> {
+  const name = `Screenshot 2026-09-15 at 2.38.${String(index).padStart(2, "0")} PM.png`;
+  return {
+    Email: "daniela@webapper.net",
+    Bucket: "csd-app-verify",
+    StorageId: 1789767981603 + index,
+    Name: name,
+    Parent: "App-Verify-2026-09-15/",
+    UpdatedAt: "2026-09-18T04:12:07.881Z",
+    Key: `App-Verify-2026-09-15/${name}`,
+  };
+}
+
 /** Heavy enough that the seed page cannot render whole — a user-entered Description. */
 function heavyItem(index: number): Record<string, unknown> {
   return {
@@ -303,6 +318,35 @@ describe("the adaptive page size converges instead of oscillating (CSD-667)", ()
       assertWalkIsSound("browse_folder", server, pages, items.length);
     });
   }
+
+  // CSD-672. Publishing the recent row's `UpdatedAt` as `LastModified` adds ~40 characters to every
+  // `recent_files` item, so the adaptive loop buys a smaller page — measured 38 → 30 on this
+  // fixture. That is the intended behaviour of the loop, not a regression, and it must stay a
+  // SETTLED size between the seed and the ceiling: no clamp, no stubbing, no withheld cursor.
+  // The sizes are compared rather than written out, because the budget calibration has moved before.
+  it("buys a smaller recent_files page for the timestamp it now publishes", async () => {
+    const timestamped = fakeServer({ items: Array.from({ length: 200 }, (_, i) => recentItem(i)), bareArray: true });
+    const untimestamped = fakeServer({
+      items: Array.from({ length: 200 }, (_, i) => {
+        const { UpdatedAt: _recencyTimestamp, ...rest } = recentItem(i);
+        return rest;
+      }),
+      bareArray: true,
+    });
+
+    const pages = await walk("recent_files", timestamped);
+    await walk("recent_files", untimestamped);
+
+    const sizes = outboundSizes(timestamped);
+    expect(sizes[0], "the first call has measured nothing").toBe(FIRST_PAGE_ITEMS);
+    expect(new Set(sizes.slice(1)).size, `the size never settled — it asked for ${sizes.slice(1).join(", ")}`).toBe(1);
+    expect(sizes[1]!, "the published timestamp must cost the page some items").toBeLessThan(
+      outboundSizes(untimestamped)[1]!,
+    );
+    expect(sizes[1]!, "still above the seed, so no clamp and no stubbing").toBeGreaterThan(FIRST_PAGE_ITEMS);
+    expect(sizes[1]!, "still below the schema maximum").toBeLessThan(MAX_PAGE_ITEMS);
+    assertWalkIsSound("recent_files", timestamped, pages, 200);
+  });
 
   it("grows for lean items and shrinks for heavy ones, from the same seed", async () => {
     const lean = fakeServer({ items: Array.from({ length: 600 }, (_, i) => leanItem(i)), bareArray: false });

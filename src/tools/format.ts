@@ -467,7 +467,12 @@ function listingItemView(item: unknown, maxItems: number): unknown {
   const key = record.Key ?? record.Path;
   if (key !== undefined) view.Key = key;
   for (const field of LISTING_ITEM_FIELDS) {
-    if (record[field] !== undefined) view[field] = record[field];
+    // CSD-672: `/storage/recent` rows carry their recency timestamp as `UpdatedAt` and have no
+    // `LastModified` of their own; one timestamp name across the four listing tools is the
+    // contract. `LastModified` wins where both exist — an indexed document's `UpdatedAt` is the
+    // index write time, which stays dropped.
+    const value = field === "LastModified" ? (record.LastModified ?? record.UpdatedAt) : record[field];
+    if (value !== undefined) view[field] = value;
   }
   for (const field of LISTING_ITEM_OPTIONAL_FIELDS) {
     const value = record[field];
