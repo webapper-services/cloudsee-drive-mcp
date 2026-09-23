@@ -1,3 +1,10 @@
+## [3.1.4](https://github.com/webapper-services/cloudsee-drive-mcp/compare/v3.1.3...v3.1.4) (2026-09-23)
+
+
+### Bug Fixes
+
+* report why a restore was refused instead of blaming the key ([ee04221](https://github.com/webapper-services/cloudsee-drive-mcp/commit/ee042215be2fc1892a029c1488fe304bc3aae205))
+
 ## [3.1.3](https://github.com/webapper-services/cloudsee-drive-mcp/compare/v3.1.2...v3.1.3) (2026-09-22)
 
 
