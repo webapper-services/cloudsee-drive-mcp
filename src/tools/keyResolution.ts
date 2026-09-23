@@ -160,6 +160,14 @@ async function attempt<T>(call: (key: string) => Promise<T>, key: string): Promi
  * Is a failure one that a different spelling of the key could fix — and therefore one the
  * ceiling sentence may stand in for?
  *
+ * This is the DEFAULT policy every caller gets, not the only one. A tool may narrow it by passing
+ * its own predicate to `callWithKeyRecovery` (CSD-670): all three exclusions below are
+ * transport-level, and `swaggerProxyResponse` serves EVERY storage-api application failure —
+ * validation, permission, conflict, unclassified fault — as HTTP 200, so the `status >= 500` arm
+ * can never fire for one and each of them is read here as a key miss. A tool whose endpoint can
+ * report its own failures distinguishably supplies a predicate that keeps them; the rest keep
+ * this one unchanged.
+ *
  * Three classes are excluded, because answering them with "object not available" would hide a
  * fault that has nothing to do with the key:
  *  - a rejected credential is not a spelling problem, and the index lookup would be denied too;
@@ -183,11 +191,15 @@ export type KeyedOutcome<T> = { resolved: true; value: T } | { resolved: false }
  * drive holds for that name.
  *
  * `isMiss` covers the endpoints that answer for an object they cannot resolve with an empty
- * payload instead of an error (`/storage/object/detail`); a thrown failure of the class above is
+ * payload instead of an error (`/storage/object/detail`); a thrown failure `isKeyMiss` accepts is
  * a miss by definition. A miss that the retry does not clear is reported as `{ resolved: false }`
  * — never as the server's own wording, which varies with the key and would tell an absent object
- * apart from an unreadable one. Anything `worthResolving` rejects is re-thrown untouched: it is a
- * real failure and must surface as itself.
+ * apart from an unreadable one. Anything `isKeyMiss` rejects is re-thrown untouched: it is a real
+ * failure and must surface as itself.
+ *
+ * `isKeyMiss` defaults to `worthResolving`, so a caller that does not pass one behaves exactly as
+ * it did before. A tool whose endpoint refuses requests for reasons of its own passes a narrower
+ * one rather than the shared default being edited for that endpoint (CSD-670).
  */
 export async function callWithKeyRecovery<T>(
   client: IndexedListingClient,
@@ -195,10 +207,11 @@ export async function callWithKeyRecovery<T>(
   objectKey: string,
   call: (key: string) => Promise<T>,
   isMiss: (value: T) => boolean = () => false,
+  isKeyMiss: (error: unknown) => boolean = worthResolving,
 ): Promise<KeyedOutcome<T>> {
   const first = await attempt(call, objectKey);
   if (first.ok && !isMiss(first.value)) return { resolved: true, value: first.value };
-  if (!first.ok && !worthResolving(first.error)) throw first.error;
+  if (!first.ok && !isKeyMiss(first.error)) throw first.error;
 
   const exactKey = await resolveIndexedKey(client, bucketName, objectKey);
   if (exactKey !== undefined) {

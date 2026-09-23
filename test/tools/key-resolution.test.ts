@@ -50,6 +50,18 @@ const RESOLUTION_PAGE_SIZE = 200;
 /** One message, used at a 5xx and at a 404, so the two cases differ ONLY in the status. */
 const SERVER_FAULT = "CloudSee API error for /storage/object/download-url: Internal server error";
 
+/**
+ * The wire shape storage-api actually produces (CSD-670 §16): drive-bridge serves EVERY
+ * ActionResult through `swaggerProxyResponse(200, …)`, so `status` is 200 whatever went wrong and
+ * the only discriminator left is the envelope's numeric `code` — 0 unclassified, 400 validation,
+ * 404 object-not-available, 10000 the `ActionResult.error()` default. `CloudSeeClient` carries
+ * that number through into a `code` field typed `string`, which is why the predicate under test
+ * has to stringify it.
+ */
+function envelopeFailure(message: string, code: number): never {
+  throw new CloudSeeError(message, { status: 200, code: String(code) });
+}
+
 const byName = Object.fromEntries(allTools.map((tool) => [tool.name, tool]));
 const getFileMetadata = byName["get_file_metadata"]!;
 const getFileTags = byName["get_file_tags"]!;
@@ -170,9 +182,12 @@ const probes: ToolProbe[] = [
     tool: downloadFile,
     path: DOWNLOAD_URL,
     args: { bucketName: "cloudsee-demo", filePath: TYPED_KEY },
-    miss: () => {
-      throw new CloudSeeError("File doesn't exist on S3.", { status: 404, code: "not_found" });
-    },
+    // CSD-670 §13.1. A genuine key miss here is `actionResult.error("File doesn't exist on S3.")`
+    // (StorageService.js:442), and `ActionResult.error` defaults to code 10000 — NOT 404 — while
+    // drive-bridge serves it as HTTP 200. Do not "simplify" this back to a 404: this endpoint has
+    // no way to report a missing object as one, which is exactly why the key recovery here cannot
+    // be narrowed to a 404 centrally.
+    miss: () => envelopeFailure("File doesn't exist on S3.", 10000),
     hit: () => ({ url: "https://s3.example/get?sig=1" }),
     hitMarker: "https://s3.example/get?sig=1",
   },
@@ -181,9 +196,11 @@ const probes: ToolProbe[] = [
     tool: shareLink,
     path: SHARE_CREATE,
     args: { bucketName: "cloudsee-demo", filePath: TYPED_KEY },
-    miss: () => {
-      throw new CloudSeeError("File doesn't exist.", { status: 404, code: "not_found" });
-    },
+    // CSD-670 §13.1. Same shape as download_file: `actionResult.error("File doesn't exist.")`
+    // (StorageService.js:575) carries code 10000 over HTTP 200. The share token collision this
+    // endpoint can also report arrives under the SAME code, which is why only a per-tool predicate
+    // could ever tell the two apart — a central 404 rule would just stop recovering here.
+    miss: () => envelopeFailure("File doesn't exist.", 10000),
     hit: () => ({ shareableLink: "https://drive.cloudsee.cloud/share/2f9c1d7e", shareId: "2f9c1d7e" }),
     hitMarker: "https://drive.cloudsee.cloud/share/2f9c1d7e",
   },
@@ -194,22 +211,26 @@ const probes: ToolProbe[] = [
     tool: duplicateFile,
     path: DUPLICATE,
     args: { bucketName: "cloudsee-demo", objectKey: TYPED_KEY },
-    miss: () => {
-      throw new CloudSeeError("File doesn't exist on S3.", { status: 404, code: "not_found" });
-    },
+    // CSD-670 §13.1. `FileService.duplicateFile` reports a missing source with the same
+    // `actionResult.error("File doesn't exist.")` — code 10000 over HTTP 200, never a 404.
+    miss: () => envelopeFailure("File doesn't exist.", 10000),
     hit: () => ({ ...indexedItem(`${FOLDER}${BASENAME}${NARROW_NO_BREAK_SPACE}PM copy.png`), StorageId: "os-2" }),
     hitMarker: "os-2",
   },
   {
     // CSD-670 §4.2a. `confirm: true` is required: without it the handler answers a confirmation
     // preview and posts nothing at all, which would make every probe pass for the wrong reason.
+    // `days` and `storageId` likewise: the endpoint requires both, so the schema does too.
     name: "restore_archived_file",
     tool: restoreArchivedFile,
     path: RESTORE,
-    args: { bucketName: "cloudsee-demo", objectKey: TYPED_KEY, confirm: true },
-    miss: () => {
-      throw new CloudSeeError("File doesn't exist on S3.", { status: 404, code: "not_found" });
-    },
+    args: { bucketName: "cloudsee-demo", objectKey: TYPED_KEY, confirm: true, days: 1, storageId: "os-1" },
+    // CSD-670 §16.4. The shape a genuine key miss has on this endpoint: S3 `NoSuchKey` reaches
+    // PublicApiErrorClassifier, which authors OBJECT_NOT_AVAILABLE at code 404, and drive-bridge
+    // serves it as HTTP 200. The `{ status: 404, code: "not_found" }` this fixture used to throw
+    // is a shape drive-bridge never produces, so the probe rows passed under a failure that could
+    // not occur — which is how the regression survived them.
+    miss: () => envelopeFailure("The specified object does not exist or is not available to your credential.", 404),
     hit: () => ({ RestoreStatus: "in-progress", RetrievalTier: "Standard" }),
     hitMarker: "in-progress",
   },
@@ -681,6 +702,103 @@ describe("A2 — against an index that answers the request it was actually sent"
     expect(outcome.text).toBe(OBJECT_NOT_AVAILABLE);
     expect(h.callsTo(DOWNLOAD_URL)).toHaveLength(1);
   });
+});
+
+/** An ASCII key, so the index can only ever offer back the very spelling that was sent — which is
+ *  what makes the recovery a pure waste of a call here. The control file from QA's own run. */
+const CONTROL_KEY = `${FOLDER}control.txt`;
+
+/** A restore the schema accepts: the endpoint requires `days` and `storageId`, so a complete call
+ *  carries both. */
+const RESTORE_ARGS: Record<string, unknown> = {
+  bucketName: "cloudsee-demo",
+  objectKey: CONTROL_KEY,
+  confirm: true,
+  days: 1,
+  storageId: "os-control",
+};
+
+/** Failures `/storage/object/restore` returns for reasons that have nothing to do with the key.
+ *  Each one arrives as HTTP 200 and is told apart only by the envelope `code`. */
+const nonKeyRestoreFailures: Array<{ because: string; message: string; code: number }> = [
+  // Production, 2026-09-22: `throw new Error('StorageId is required.')` reaches
+  // PublicApiErrorClassifier, matches no classification, and leaves as UNCLASSIFIED_FAILURE.
+  {
+    because: "the request is missing a required field",
+    message: "An error was encountered. Please contact the system administrator",
+    code: 0,
+  },
+  { because: "days was not supplied", message: "days is required.", code: 400 },
+  { because: "the object is already restored", message: "Object is already restored.", code: 10000 },
+  { because: "a restore is already running", message: "Object is already in restoring status.", code: 10000 },
+  // The seam between CSD-670's two halves. storage-api now classifies S3 `InvalidObjectState` as
+  // 409 with its own sentence, and this is the only thing that pins the connector handing that
+  // answer to the caller instead of substituting one. 409 is deliberately NOT 404: the state
+  // conflict is reachable only after the object was resolved and the operation granted, so it is
+  // not an existence signal and must stay outside the key recovery.
+  {
+    because: "the object is not archived",
+    message:
+      "The specified object is in a storage class that does not allow this operation. " +
+      "An archived object must be restored before it can be read, and only an archived object can be restored.",
+    code: 409,
+  },
+];
+
+/** Restore calls the schema must refuse outright, because the server requires the field the call
+ *  omits and answers an opaque sentence when it is absent (CSD-670 RC-1). */
+const incompleteRestoreCalls: Array<{ missing: string; args: Record<string, unknown> }> = [
+  { missing: "storageId", args: { bucketName: "cloudsee-demo", objectKey: CONTROL_KEY, confirm: true, days: 1 } },
+  { missing: "days", args: { bucketName: "cloudsee-demo", objectKey: CONTROL_KEY, confirm: true, storageId: "os-control" } },
+];
+
+describe("CSD-670 regression — restore_archived_file must not answer a non-key failure with the key sentence", () => {
+  it.each(nonKeyRestoreFailures)("keeps the server's own reason when $because", async ({ message, code }) => {
+    const h = harness({
+      [RESTORE]: () => envelopeFailure(message, code),
+      [LIST]: indexedFolder([CONTROL_KEY]),
+    });
+
+    const outcome = await outcomeOf(restoreArchivedFile, RESTORE_ARGS, h.ctx);
+
+    expect(outcome.isError).toBe(true);
+    expect(outcome.text).toContain(message);
+    expect(outcome.text).not.toBe(OBJECT_NOT_AVAILABLE);
+    // A failure that is not about the key must not spend an index lookup finding that out.
+    expect(h.callsTo(LIST)).toHaveLength(0);
+    expect(h.callsTo(RESTORE)).toHaveLength(1);
+  });
+
+  // A refusal storage-api classifies as nothing in particular still leaves as code 0 and the
+  // generic sentence — that is the widest failure mode this endpoint has, and the one QA's own
+  // run landed on. Whatever the server managed to say about it, the connector may not replace it
+  // with a sentence about the key. This asserts only that; the named "not archived" answer is
+  // pinned by the 409 row above.
+  it("a STANDARD object that cannot be restored is not reported as an unresolvable key", async () => {
+    const h = harness({
+      [RESTORE]: () => envelopeFailure("An error was encountered. Please contact the system administrator", 0),
+      [LIST]: indexedFolder([CONTROL_KEY]),
+    });
+
+    const outcome = await outcomeOf(restoreArchivedFile, RESTORE_ARGS, h.ctx);
+
+    expect(outcome.text).not.toBe(OBJECT_NOT_AVAILABLE);
+    expect(h.callsTo(LIST)).toHaveLength(0);
+  });
+
+  // CSD-670 RC-1. StorageService.restoreObject requires both fields — it returns "days is
+  // required." for one and throws a bare Error for the other — so a schema that calls them
+  // optional lets an agent compose a call that cannot succeed.
+  it.each(incompleteRestoreCalls)(
+    "refuses a restore with no $missing instead of posting one the server will refuse",
+    async ({ args }) => {
+      const h = harness({ [RESTORE]: () => ({ RestoreStatus: "in-progress" }), [LIST]: indexedFolder([CONTROL_KEY]) });
+
+      await expect(restoreArchivedFile.handler(args, h.ctx)).rejects.toThrow();
+
+      expect(h.callsTo(RESTORE)).toHaveLength(0);
+    },
+  );
 });
 
 // The same fold backs write.ts's near-match hint for a local file, so a name that resolves on the

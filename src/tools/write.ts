@@ -1,7 +1,7 @@
 import { open, readFile, readdir, stat } from "node:fs/promises";
 import { basename, dirname } from "node:path";
 import { z } from "zod";
-import { CloudSeeError } from "../errors";
+import { AuthError, CloudSeeError } from "../errors";
 import { confirmShape, confirmationPreview } from "../confirm";
 import { formatMetadataUpdate, summarize } from "./format";
 import { callWithKeyRecovery, foldForMatching, objectNotAvailableResult } from "./keyResolution";
@@ -618,7 +618,8 @@ const uploadFileInline: ToolDef = {
 // background (typically under 2 minutes). RequestType, AsCopy and UserId are
 // pinned/injected server-side per endpoint and must NEVER be sent from here.
 
-/** Zod field for the indexed storage id every queue endpoint requires. */
+/** Zod field for the indexed storage id every queue endpoint — and `/storage/object/restore`
+ *  (CSD-670 RC-1) — requires. */
 const storageIdField = z
   .string()
   .min(1)
@@ -1003,14 +1004,30 @@ const updateMetadata: ToolDef = {
 };
 
 // ---- restore_archived_file → POST /storage/object/restore (restoreObject, drive:write) — Glacier un-archive ----
+// CSD-670 RC-1. `days` and `storageId` are required by StorageService.restoreObject — it returns
+// "days is required." for the first and throws a bare `Error` for the second — so declaring them
+// optional made every call the agent could honestly compose fail at the server. Refusing here
+// names the missing field instead of spending a request to be refused opaquely.
 const restoreSchema = z.object({
   bucketName: bucketField,
   objectKey: z.string().min(1).describe("Object key of the archived (Glacier) object to restore."),
-  days: z.number().int().min(1).optional().describe("How many days to keep the restored copy available."),
+  days: z.number().int().min(1).describe("How many days to keep the restored copy available."),
   retrievalTier: z.enum(["Expedited", "Standard", "Bulk"]).optional().describe("Glacier retrieval tier (default Standard)."),
-  storageId: z.string().optional().describe("Optional storage/index id."),
+  storageId: storageIdField,
   ...confirmShape,
 });
+
+/** `/storage/object/restore` refuses a request for reasons that have nothing to do with the key —
+ *  a missing storageId or days, an object already restored, a storage class that cannot be
+ *  restored. Only the failure the server classifies as object-not-available (code 404) is one
+ *  another spelling could fix; everything else must surface as itself (CSD-670 regression).
+ *  `String(error.code)` is deliberate: the envelope's `code` is typed `string` but arrives as the
+ *  numeric `ActionResult.code`, so a bare comparison would never match. */
+const isRestoreKeyMiss = (error: unknown): boolean =>
+  error instanceof CloudSeeError &&
+  !(error instanceof AuthError) &&
+  !error.retryable &&
+  (String(error.code) === "404" || error.status === 404);
 const restoreArchivedFile: ToolDef = {
   name: "restore_archived_file",
   title: "Restore archived file",
@@ -1028,15 +1045,24 @@ const restoreArchivedFile: ToolDef = {
         `Drive: ${bucketName}\nTier: ${a.retrievalTier ?? "Standard"}${a.days ? `, ${a.days} day(s)` : ""}. May incur retrieval cost.`,
       );
     }
-    // Same key recovery as duplicate_file above (CSD-670).
-    const outcome = await callWithKeyRecovery(client, bucketName, a.objectKey, (objectKey) =>
-      client.post("/storage/object/restore", {
-        bucketName,
-        objectKey,
-        days: a.days,
-        retrievalTier: a.retrievalTier,
-        storageId: a.storageId,
-      }),
+    // Same key recovery as duplicate_file above (CSD-670), narrowed by `isRestoreKeyMiss`: this
+    // endpoint refuses a request for reasons of its own and the default policy reads every one of
+    // them as a key miss. `undefined` leaves the payload-miss check at its default — a miss here
+    // arrives as a throw, never as an empty answer.
+    const outcome = await callWithKeyRecovery(
+      client,
+      bucketName,
+      a.objectKey,
+      (objectKey) =>
+        client.post("/storage/object/restore", {
+          bucketName,
+          objectKey,
+          days: a.days,
+          retrievalTier: a.retrievalTier,
+          storageId: a.storageId,
+        }),
+      undefined,
+      isRestoreKeyMiss,
     );
     if (!outcome.resolved) return objectNotAvailableResult();
     return textResult(`Restore initiated for "${a.objectKey}".\n\n${summarize(outcome.value)}`);
